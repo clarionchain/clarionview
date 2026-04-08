@@ -1,0 +1,24 @@
+---
+description: All edits and searches stay inside dc_workbench only
+alwaysApply: true
+---
+
+# Workspace scope
+
+This Cursor workspace is the **dc_workbench** app only.
+
+- **Do not** create, edit, delete, or move files outside this workspace root.
+- **Do not** modify sibling projects (e.g. `dc_web_app`, other folders under `dc_clarionchain`) even if you discover them on disk or in git history.
+- Use **grep**, **glob**, and **code search** only under this workspace unless the user explicitly asks to include another path.
+- **Exception:** The user explicitly names another file or directory and asks you to change it.
+
+If something requires a change in another repo, **say so** and give exact steps; do not apply the change yourself unless they explicitly ask for that path.
+
+# Refresh the running app (do not delegate)
+
+After changes that affect what the browser loads (UI, client components, `next.config`, env baked at build time):
+
+- **Docker workbench** (`dc_clarionchain_workbench`): from the parent repo directory `dc_clarionchain`, run  
+  `docker compose build workbench && docker compose up -d workbench`  
+  yourself. Do not ask the user to restart or rebuild.
+- **Local dev** (if used): app listens on **52871** (IANA dynamic range; avoids 3000/3001 conflicts). If the port is busy, inspect what is bound (`ss -tlnp` / `lsof`) and either stop that process deliberately or change the port in `package.json`—do **not** kill arbitrary PIDs on the user’s machine without explicit approval.
