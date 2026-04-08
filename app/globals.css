@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* One shell color for sidebar, chart, assistant — literal hex so nothing reads as #000 */
+    --workbench-shell: #0a0e14;
+    --foreground: 210 40% 98%;
+    --background: 210 28% 7%;
+    --card: 210 28% 7%;
+    --card-foreground: 210 40% 98%;
+    --popover: 210 28% 7%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 68.4%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    background-color: var(--workbench-shell);
+  }
+  body {
+    background-color: var(--workbench-shell);
+    @apply text-foreground;
+  }
+}
+
+/*
+ * Chart column + assistant rail: same paint as sidebar (bg-card uses --card; this matches --workbench-shell).
+ * !important beats any stray utility / compositing that was leaving the panel pure black.
+ */
+.workbench-shell-surface {
+  background-color: var(--workbench-shell) !important;
+  background-image: none !important;
+}
+
+/* —— Login: Vanta NET canvas overlay —— */
+.login-vanta-vignette {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: radial-gradient(ellipse 78% 72% at 50% 48%, transparent 0%, rgba(0, 0, 0, 0.45) 100%);
+}

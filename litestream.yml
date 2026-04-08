@@ -1,0 +1,22 @@
+# Litestream configuration — continuous SQLite replication
+# Documentation: https://litestream.io/reference/config/
+#
+# Usage:
+#   docker compose --profile backup up -d
+#
+# The litestream service streams every WAL write to the configured replica.
+# On disaster recovery: litestream restore -config /etc/litestream.yml /app/data/workbench.db
+
+dbs:
+  - path: /app/data/workbench.db
+    replicas:
+      # ── S3-compatible (AWS S3, Backblaze B2, Cloudflare R2, MinIO) ──────
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: workbench/db
+        region: ${LITESTREAM_REGION:-us-east-1}
+        endpoint: ${LITESTREAM_ENDPOINT:-}          # Leave blank for AWS S3
+        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+        retention: 72h                               # Keep 72h of snapshots
+        sync-interval: 10s                           # Sync every 10 seconds
