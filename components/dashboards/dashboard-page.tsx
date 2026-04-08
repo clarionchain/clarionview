@@ -5,10 +5,11 @@ import { ExternalLink, Loader2, TrendingUp, TrendingDown, AlertCircle } from "lu
 import { withBase } from "@/lib/base-path"
 import { formatValue } from "@/lib/workbench-types"
 import { cn } from "@/lib/utils"
-import type { IChartApi, ISeriesApi } from "lightweight-charts"
+import type { IChartApi } from "lightweight-charts"
 
 // Lazy-import lightweight-charts (browser-only)
 let createChart: typeof import("lightweight-charts").createChart | null = null
+let LineSeries: typeof import("lightweight-charts").LineSeries | null = null
 
 interface TickerDef {
   seriesName: string   // e.g. "yf:IBIT" or "fred:FEDFUNDS"
@@ -61,7 +62,8 @@ export function DashboardPage({ title, description, tickers, templateId }: Dashb
 
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const seriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map())
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const seriesRefs = useRef<Map<string, any>>(new Map())
 
   // Fetch all ticker data
   useEffect(() => {
@@ -94,9 +96,10 @@ export function DashboardPage({ title, description, tickers, templateId }: Dashb
     if (anyLoading || !chartContainerRef.current) return
 
     const init = async () => {
-      if (!createChart) {
+      if (!createChart || !LineSeries) {
         const mod = await import("lightweight-charts")
         createChart = mod.createChart
+        LineSeries = mod.LineSeries
       }
 
       const container = chartContainerRef.current!
@@ -132,7 +135,7 @@ export function DashboardPage({ title, description, tickers, templateId }: Dashb
 
         let lineSeries = seriesRefs.current.get(ticker.seriesName)
         if (!lineSeries) {
-          lineSeries = chart.addLineSeries({
+          lineSeries = chart.addSeries(LineSeries!, {
             color: ticker.color,
             lineWidth: 2,
             title: ticker.label,

@@ -15,6 +15,7 @@ function logicalPath(pathname: string): string {
 
 function isPublicLogicalPath(path: string): boolean {
   if (path === "/login") return true
+  if (path === "/api/health") return true
   if (path.startsWith("/api/auth/")) return true
   if (path.startsWith("/_next/")) return true
   if (path === "/favicon.ico") return true
