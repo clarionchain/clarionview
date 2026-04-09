@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  nextjs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        WORKBENCH_SESSION_SECRET: ${WORKBENCH_SESSION_SECRET}
+        NEXT_PUBLIC_BASE_PATH: ""
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      WORKBENCH_SESSION_SECRET: ${WORKBENCH_SESSION_SECRET}
+      WORKBENCH_ADMIN_PASSWORD: ${WORKBENCH_ADMIN_PASSWORD}
+      WORKBENCH_ADMIN_USER: ${WORKBENCH_ADMIN_USER:-admin}
+      SQLITE_PATH: /app/data/workbench.db
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-}
+      OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-ClarionView}
+      OPENROUTER_DEFAULT_MODEL: ${OPENROUTER_DEFAULT_MODEL:-openai/gpt-4o-mini}
+      WORKBENCH_BYOK_ENCRYPTION_KEY: ${WORKBENCH_BYOK_ENCRYPTION_KEY:-}
+      PYTHON_SERVICE_URL: http://analytics:8000
+    volumes:
+      - app_data:/app/data
+    networks:
+      - clarionview
+
+  analytics:
+    build:
+      context: ./python
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_DEFAULT_MODEL: ${OPENROUTER_DEFAULT_MODEL:-openai/gpt-4o-mini}
+      REPORTS_DIR: /app/data/reports
+      REPORT_HOUR_UTC: ${REPORT_HOUR_UTC:-2}
+    volumes:
+      - app_data:/app/data
+    networks:
+      - clarionview
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - clarionview
+    depends_on:
+      - nextjs
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  clarionview:
+    driver: bridge
