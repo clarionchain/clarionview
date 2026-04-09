@@ -4,6 +4,7 @@ import { getUserAiSettings } from "@/lib/ai-settings"
 import { decryptByok } from "@/lib/byok-crypto"
 import { normalizeOpenAiV1Base } from "@/lib/openai-base-url"
 import { resolveOpenRouterForUser } from "@/lib/openrouter-resolve"
+import { resolveRoutstrForUser, ROUTSTR_BASE } from "@/lib/routstr-resolve"
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
@@ -29,6 +30,69 @@ export async function GET() {
 
   const s = getUserAiSettings(auth.userId)
   const now = Date.now()
+
+  if (s.aiChatProvider === "routstr") {
+    const resolved = resolveRoutstrForUser(auth.userId, null)
+    const cacheKey = `routstr:${auth.userId}:${resolved.ok ? resolved.source : "n"}`
+
+    if (cache && cache.expires > now && cache.cacheKey === cacheKey) {
+      return NextResponse.json({
+        models: cache.models,
+        cached: true,
+        listSource: "auth",
+        chatReady: resolved.ok,
+        chatHint: resolved.ok ? undefined : resolved.message,
+        chatCode: resolved.ok ? undefined : resolved.code,
+        provider: "routstr",
+      })
+    }
+
+    if (!resolved.ok) {
+      return NextResponse.json({
+        models: [] as ListedModel[],
+        cached: false,
+        listSource: "auth",
+        chatReady: false,
+        chatHint: resolved.message,
+        chatCode: resolved.code,
+        provider: "routstr",
+      })
+    }
+
+    const upstream = await fetch(`${ROUTSTR_BASE}/models`, {
+      headers: { Authorization: `Bearer ${resolved.apiKey}` },
+    }).catch(() => null)
+
+    if (!upstream || !upstream.ok) {
+      // Return known good models as fallback if the catalog endpoint fails
+      const fallback: ListedModel[] = [
+        { id: "meta-llama/llama-3.1-8b-instruct", name: "Llama 3.1 8B Instruct" },
+        { id: "meta-llama/llama-3.1-70b-instruct", name: "Llama 3.1 70B Instruct" },
+        { id: "mistralai/mistral-7b-instruct", name: "Mistral 7B Instruct" },
+        { id: "openai/gpt-4o", name: "GPT-4o" },
+        { id: "openai/gpt-4o-mini", name: "GPT-4o Mini" },
+        { id: "anthropic/claude-3-5-sonnet", name: "Claude 3.5 Sonnet" },
+      ]
+      return NextResponse.json({
+        models: fallback,
+        cached: false,
+        listSource: "fallback",
+        chatReady: true,
+        provider: "routstr",
+      })
+    }
+
+    const json = await upstream.json()
+    const models = parseModelsPayload(json)
+    cache = { expires: now + TTL_MS, models, cacheKey }
+    return NextResponse.json({
+      models,
+      cached: false,
+      listSource: "auth",
+      chatReady: true,
+      provider: "routstr",
+    })
+  }
 
   if (s.aiChatProvider === "local") {
     const rawBase = s.localOpenAiBaseUrl?.trim() || ""

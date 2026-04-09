@@ -89,6 +89,8 @@ function migrateUserAiColumns(db: Database.Database) {
     ["local_openai_base_url", "ALTER TABLE users ADD COLUMN local_openai_base_url TEXT"],
     ["local_openai_api_key_encrypted", "ALTER TABLE users ADD COLUMN local_openai_api_key_encrypted TEXT"],
     ["local_model", "ALTER TABLE users ADD COLUMN local_model TEXT"],
+    ["routstr_api_key_encrypted", "ALTER TABLE users ADD COLUMN routstr_api_key_encrypted TEXT"],
+    ["routstr_model", "ALTER TABLE users ADD COLUMN routstr_model TEXT"],
   ]
   for (const [name, ddl] of alters) {
     if (!userColumnNames().has(name)) {
