@@ -27,7 +27,7 @@ WORKDIR /app
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 
-RUN apk add --no-cache libc6-compat python3 make g++
+RUN apk add --no-cache libc6-compat python3 make g++ su-exec
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
@@ -47,8 +47,10 @@ RUN cd /app/node_modules/better-sqlite3 && npm run build-release \
   && chown -R nextjs:nodejs /app/node_modules/better-sqlite3
 RUN apk del python3 make g++
 
-USER nextjs
+COPY --chmod=755 docker-entrypoint.sh /docker-entrypoint.sh
 
+# Run as root so entrypoint can fix /app/data ownership after volume mount,
+# then drops to nextjs (uid 1001) via su-exec.
 ENV SQLITE_PATH=/app/data/workbench.db
 
 EXPOSE 3002
@@ -56,4 +58,4 @@ EXPOSE 3002
 ENV PORT 3002
 ENV HOSTNAME "0.0.0.0"
 
-CMD ["node", "server.js"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
