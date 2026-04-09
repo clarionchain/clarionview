@@ -3,6 +3,7 @@ import { getUserAiSettings, type AiChatProvider } from "@/lib/ai-settings"
 import { decryptByok } from "@/lib/byok-crypto"
 import { normalizeOpenAiV1Base } from "@/lib/openai-base-url"
 import { resolveOpenRouterForUser } from "@/lib/openrouter-resolve"
+import { resolveRoutstrForUser, ROUTSTR_BASE } from "@/lib/routstr-resolve"
 
 export type ChatTargetOk =
   | {
@@ -22,6 +23,15 @@ export type ChatTargetOk =
       model: string
       headers: Record<string, string>
       logSource: "local"
+    }
+  | {
+      ok: true
+      kind: "routstr"
+      url: string
+      apiKey: string
+      model: string
+      headers: Record<string, string>
+      logSource: "byok" | "platform"
     }
 
 export type ChatTargetErr = { ok: false; status: number; message: string; code?: string }
@@ -79,6 +89,23 @@ export function resolveChatTarget(userId: number, modelOverride: string | null):
       model,
       headers,
       logSource: "local",
+    }
+  }
+
+  if (provider === "routstr") {
+    const rs = resolveRoutstrForUser(userId, modelOverride)
+    if (!rs.ok) return { ok: false, status: rs.status, message: rs.message, code: rs.code }
+    return {
+      ok: true,
+      kind: "routstr",
+      url: `${ROUTSTR_BASE}/chat/completions`,
+      apiKey: rs.apiKey,
+      model: rs.model,
+      headers: {
+        Authorization: `Bearer ${rs.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      logSource: rs.source,
     }
   }
 

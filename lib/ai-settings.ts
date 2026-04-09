@@ -2,7 +2,7 @@ import { getDb } from "@/lib/db"
 
 export type AiKeySourceMode = "auto" | "byok_only" | "platform_only"
 /** Where chat completions are sent. */
-export type AiChatProvider = "openrouter" | "local"
+export type AiChatProvider = "openrouter" | "local" | "routstr"
 
 export type UserAiSettings = {
   openrouterByokEncrypted: string | null
@@ -13,6 +13,8 @@ export type UserAiSettings = {
   localOpenAiBaseUrl: string | null
   localOpenAiApiKeyEncrypted: string | null
   localModel: string | null
+  routstrApiKeyEncrypted: string | null
+  routstrModel: string | null
 }
 
 export function parseAiKeySource(raw: string | null | undefined): AiKeySourceMode {
@@ -24,6 +26,7 @@ export function parseAiKeySource(raw: string | null | undefined): AiKeySourceMod
 
 export function parseAiChatProvider(raw: string | null | undefined): AiChatProvider {
   if (raw === "local") return "local"
+  if (raw === "routstr") return "routstr"
   return "openrouter"
 }
 
@@ -32,7 +35,8 @@ export function getUserAiSettings(userId: number): UserAiSettings {
   const row = db
     .prepare(
       `SELECT openrouter_byok_encrypted, openrouter_model, ai_key_source, ai_allow_platform,
-              ai_chat_provider, local_openai_base_url, local_openai_api_key_encrypted, local_model
+              ai_chat_provider, local_openai_base_url, local_openai_api_key_encrypted, local_model,
+              routstr_api_key_encrypted, routstr_model
        FROM users WHERE id = ?`
     )
     .get(userId) as
@@ -45,6 +49,8 @@ export function getUserAiSettings(userId: number): UserAiSettings {
         local_openai_base_url: string | null
         local_openai_api_key_encrypted: string | null
         local_model: string | null
+        routstr_api_key_encrypted: string | null
+        routstr_model: string | null
       }
     | undefined
   if (!row) {
@@ -57,6 +63,8 @@ export function getUserAiSettings(userId: number): UserAiSettings {
       localOpenAiBaseUrl: null,
       localOpenAiApiKeyEncrypted: null,
       localModel: null,
+      routstrApiKeyEncrypted: null,
+      routstrModel: null,
     }
   }
   return {
@@ -68,6 +76,8 @@ export function getUserAiSettings(userId: number): UserAiSettings {
     localOpenAiBaseUrl: row.local_openai_base_url,
     localOpenAiApiKeyEncrypted: row.local_openai_api_key_encrypted,
     localModel: row.local_model,
+    routstrApiKeyEncrypted: row.routstr_api_key_encrypted,
+    routstrModel: row.routstr_model,
   }
 }
 
@@ -82,6 +92,8 @@ export function updateUserAiSettings(
     localOpenAiBaseUrl: string | null
     localOpenAiApiKeyEncrypted: string | null
     localModel: string | null
+    routstrApiKeyEncrypted: string | null
+    routstrModel: string | null
   }
 ): void {
   const db = getDb()
@@ -94,7 +106,9 @@ export function updateUserAiSettings(
       ai_chat_provider = ?,
       local_openai_base_url = ?,
       local_openai_api_key_encrypted = ?,
-      local_model = ?
+      local_model = ?,
+      routstr_api_key_encrypted = ?,
+      routstr_model = ?
      WHERE id = ?`
   ).run(
     next.openrouterByokEncrypted,
@@ -105,6 +119,8 @@ export function updateUserAiSettings(
     next.localOpenAiBaseUrl,
     next.localOpenAiApiKeyEncrypted,
     next.localModel,
+    next.routstrApiKeyEncrypted,
+    next.routstrModel,
     userId
   )
 }

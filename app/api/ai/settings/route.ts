@@ -14,14 +14,16 @@ function isAiKeySourceMode(s: string): s is AiKeySourceMode {
 }
 
 function isAiChatProvider(s: string): s is AiChatProvider {
-  return s === "openrouter" || s === "local"
+  return s === "openrouter" || s === "local" || s === "routstr"
 }
 
 function jsonSettings(userId: number) {
   const s = getUserAiSettings(userId)
   const platformConfigured = Boolean(process.env.OPENROUTER_API_KEY?.trim())
+  const routstrPlatformConfigured = Boolean(process.env.ROUTSTR_API_KEY?.trim())
   const envDefault = process.env.OPENROUTER_DEFAULT_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL
   const localDefault = process.env.LOCAL_DEFAULT_MODEL?.trim() || "llama3.2"
+  const routstrDefault = process.env.ROUTSTR_DEFAULT_MODEL?.trim() || "meta-llama/llama-3.1-8b-instruct"
   return {
     model: s.openrouterModel,
     aiKeySource: s.aiKeySource,
@@ -34,6 +36,10 @@ function jsonSettings(userId: number) {
     localModel: s.localModel,
     hasLocalApiKey: Boolean(s.localOpenAiApiKeyEncrypted),
     defaultLocalModelSuggestion: localDefault,
+    hasRoutstrKey: Boolean(s.routstrApiKeyEncrypted),
+    routstrModel: s.routstrModel,
+    routstrPlatformConfigured,
+    defaultRoutstrModelSuggestion: routstrDefault,
   }
 }
 
@@ -108,6 +114,29 @@ export async function PATCH(req: Request) {
     )
   }
 
+  let routstrApiKeyEncrypted: string | null = cur.routstrApiKeyEncrypted
+  const routstrKeyAction = body.routstrKeyAction
+  if (routstrKeyAction === "clear") {
+    routstrApiKeyEncrypted = null
+  } else if (routstrKeyAction === "set") {
+    const raw = body.routstrApiKey
+    if (typeof raw !== "string") {
+      return NextResponse.json({ error: "routstrApiKey must be a string when routstrKeyAction is set" }, { status: 400 })
+    }
+    const trimmed = raw.trim()
+    if (trimmed.length < 8) {
+      return NextResponse.json({ error: "Routstr key looks too short" }, { status: 400 })
+    }
+    try {
+      routstrApiKeyEncrypted = encryptByok(trimmed)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Encryption failed"
+      return NextResponse.json({ error: msg }, { status: 503 })
+    }
+  } else if (routstrKeyAction !== undefined && routstrKeyAction !== "keep") {
+    return NextResponse.json({ error: "routstrKeyAction must be keep, set, or clear" }, { status: 400 })
+  }
+
   let openrouterModel: string | null = cur.openrouterModel
   if ("model" in body) {
     const m = body.model
@@ -147,6 +176,19 @@ export async function PATCH(req: Request) {
     }
   }
 
+  let routstrModel: string | null = cur.routstrModel
+  if ("routstrModel" in body) {
+    const m = body.routstrModel
+    if (m === null || m === "") {
+      routstrModel = null
+    } else if (typeof m === "string") {
+      const t = m.trim()
+      routstrModel = t.length > 0 ? t.slice(0, 256) : null
+    } else {
+      return NextResponse.json({ error: "routstrModel must be string or null" }, { status: 400 })
+    }
+  }
+
   let aiChatProvider = cur.aiChatProvider
   if ("aiChatProvider" in body) {
     const v = body.aiChatProvider
@@ -182,6 +224,8 @@ export async function PATCH(req: Request) {
     localOpenAiBaseUrl,
     localOpenAiApiKeyEncrypted,
     localModel,
+    routstrApiKeyEncrypted,
+    routstrModel,
   })
 
   return NextResponse.json({ ok: true, ...jsonSettings(auth.userId) })
