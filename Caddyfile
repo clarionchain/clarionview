@@ -1,0 +1,8 @@
+clarionview.io {
+    reverse_proxy nextjs:3002
+}
+
+# Uncomment after adding www.clarionview.io A record in DNS:
+# www.clarionview.io {
+#     redir https://clarionview.io{uri} permanent
+# }
