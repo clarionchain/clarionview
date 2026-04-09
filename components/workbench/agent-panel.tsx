@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
-import { Loader2, MoreVertical, PanelRightClose, Send, Settings, Sparkles, Trash2 } from "lucide-react"
+import { FileText, Loader2, MoreVertical, PanelRightClose, Send, Settings, Sparkles, Trash2 } from "lucide-react"
+import type { SummarizeLength } from "@/app/api/ai/summarize/route"
 import type { TVChartHandle } from "@/components/workbench/tv-chart"
 import { buildChartContextMarkdown } from "@/lib/chart-context"
 import { withBase } from "@/lib/base-path"
@@ -18,6 +19,14 @@ import {
 } from "@/components/ui/dropdown-menu"
 
 export type AgentCategory = "market" | "edu" | "trade" | "technical"
+type PanelMode = "chat" | "summarize"
+
+const SUMMARIZE_LENGTH_LABELS: Record<SummarizeLength, string> = {
+  short: "Short (~200w)",
+  medium: "Medium (~400w)",
+  long: "Long (~800w)",
+  xl: "XL (~1500w)",
+}
 
 const CATEGORY_LABELS: Record<AgentCategory, string> = {
   market: "Market",
@@ -75,7 +84,11 @@ export function AgentPanel({
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [modelPlaceholder, setModelPlaceholder] = useState(DEFAULT_OPENROUTER_MODEL)
-  const [aiProvider, setAiProvider] = useState<"openrouter" | "local">("openrouter")
+  const [aiProvider, setAiProvider] = useState<"openrouter" | "local" | "routstr">("openrouter")
+  const [panelMode, setPanelMode] = useState<PanelMode>("chat")
+  const [summarizeUrl, setSummarizeUrl] = useState("")
+  const [summarizeLength, setSummarizeLength] = useState<SummarizeLength>("medium")
+  const [summarizing, setSummarizing] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const { openSettings } = useWorkbenchSettings()
 
@@ -94,14 +107,16 @@ export function AgentPanel({
           error?: string
           chatReady?: boolean
           chatHint?: string
-          provider?: "openrouter" | "local"
+          provider?: "openrouter" | "local" | "routstr"
         }
         const sJson = (await sRes.json().catch(() => ({}))) as {
           model?: string | null
           defaultModelSuggestion?: string
-          aiChatProvider?: "openrouter" | "local"
+          aiChatProvider?: "openrouter" | "local" | "routstr"
           localModel?: string | null
           defaultLocalModelSuggestion?: string
+          routstrModel?: string | null
+          defaultRoutstrModelSuggestion?: string
         }
         if (cancelled) return
         const ready = mRes.ok && mJson.chatReady !== false
@@ -122,14 +137,15 @@ export function AgentPanel({
           setModels([])
           setModelsError(typeof mJson.error === "string" ? mJson.error : "Could not load models")
         }
-        const prov = sJson.aiChatProvider === "local" ? "local" : "openrouter"
+        const prov: "openrouter" | "local" | "routstr" =
+          sJson.aiChatProvider === "local" ? "local" : sJson.aiChatProvider === "routstr" ? "routstr" : "openrouter"
         setAiProvider(prov)
         const pref =
           prov === "local"
-            ? sJson.localModel?.trim() ||
-              sJson.defaultLocalModelSuggestion?.trim() ||
-              "llama3.2"
-            : sJson.model?.trim() || sJson.defaultModelSuggestion?.trim() || DEFAULT_OPENROUTER_MODEL
+            ? sJson.localModel?.trim() || sJson.defaultLocalModelSuggestion?.trim() || "llama3.2"
+            : prov === "routstr"
+              ? sJson.routstrModel?.trim() || sJson.defaultRoutstrModelSuggestion?.trim() || "meta-llama/llama-3.1-8b-instruct"
+              : sJson.model?.trim() || sJson.defaultModelSuggestion?.trim() || DEFAULT_OPENROUTER_MODEL
         setModelPlaceholder(pref)
         setModel((prev) => (prev ? prev : pref))
       } catch {
@@ -295,6 +311,94 @@ export function AgentPanel({
     scrollToBottom,
   ])
 
+  const summarize = useCallback(async () => {
+    const url = summarizeUrl.trim()
+    if (!url || summarizing) return
+    setSummarizing(true)
+    setError(null)
+
+    const modelTrim = model.trim()
+    const userMsg = `Summarize: ${url}`
+    setThread((prev) => [...prev, { role: "user" as const, content: userMsg }])
+
+    try {
+      const res = await fetch(withBase("/api/ai/summarize"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, length: summarizeLength, model: modelTrim || undefined }),
+      })
+
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string }
+        setError(typeof j.error === "string" ? j.error : `Request failed (${res.status})`)
+        setThread((prev) => prev.slice(0, -1))
+        return
+      }
+
+      if (!res.body) {
+        setError("No response body")
+        setThread((prev) => prev.slice(0, -1))
+        return
+      }
+
+      const pageTitle = res.headers.get("X-Summarize-Title")
+        ? decodeURIComponent(res.headers.get("X-Summarize-Title")!)
+        : null
+
+      let assistant = pageTitle ? `**${pageTitle}**\n\n` : ""
+      setThread((prev) => [...prev, { role: "assistant", content: assistant }])
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      const appendDelta = (d: string) => {
+        assistant += d
+        setThread((prev) => {
+          const copy = [...prev]
+          const last = copy[copy.length - 1]
+          if (last?.role === "assistant") copy[copy.length - 1] = { role: "assistant", content: assistant }
+          return copy
+        })
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+        for (;;) {
+          const nl = buffer.indexOf("\n")
+          if (nl < 0) break
+          const line = buffer.slice(0, nl).trim()
+          buffer = buffer.slice(nl + 1)
+          if (!line.startsWith("data:")) continue
+          const data = line.slice(5).trim()
+          if (data === "[DONE]") continue
+          try {
+            const j = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] }
+            const c = j.choices?.[0]?.delta?.content
+            if (typeof c === "string" && c.length > 0) appendDelta(c)
+          } catch { /* ignore */ }
+        }
+        if (done) break
+      }
+
+      setSummarizeUrl("")
+      // Switch to chat mode so user can ask follow-up questions
+      setPanelMode("chat")
+    } catch {
+      setError("Network error")
+      setThread((prev) => {
+        const last = prev[prev.length - 1]
+        if (last?.role === "user" && last.content === userMsg) return prev.slice(0, -1)
+        return prev
+      })
+    } finally {
+      setSummarizing(false)
+      requestAnimationFrame(scrollToBottom)
+    }
+  }, [summarizeUrl, summarizing, model, summarizeLength, scrollToBottom])
+
   useEffect(() => {
     scrollToBottom()
   }, [thread, scrollToBottom])
@@ -361,6 +465,36 @@ export function AgentPanel({
         </button>
       </header>
 
+      {/* Mode switcher */}
+      <div className="flex shrink-0 border-b border-border" style={{ backgroundColor: "var(--workbench-shell)" }}>
+        <button
+          type="button"
+          onClick={() => setPanelMode("chat")}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px",
+            panelMode === "chat"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Send className="h-3 w-3" />
+          Chat
+        </button>
+        <button
+          type="button"
+          onClick={() => setPanelMode("summarize")}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px",
+            panelMode === "summarize"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <FileText className="h-3 w-3" />
+          Summarize
+        </button>
+      </div>
+
       {!chatReady && chatHint ? (
         <div className="shrink-0 border-b border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-200/90">
           <span className="font-medium text-amber-100">Assistant is not ready.</span> {chatHint}{" "}
@@ -374,27 +508,29 @@ export function AgentPanel({
         </div>
       ) : null}
 
-      <div
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1.5"
-        style={{ backgroundColor: "var(--workbench-shell)" }}
-      >
-        {(Object.keys(CATEGORY_LABELS) as AgentCategory[]).map((k) => (
-          <button
-            key={k}
-            type="button"
-            disabled={sending}
-            onClick={() => setCategory(k)}
-            className={cn(
-              "shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
-              category === k
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-            )}
-          >
-            {CATEGORY_LABELS[k]}
-          </button>
-        ))}
-      </div>
+      {panelMode === "chat" ? (
+        <div
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1.5"
+          style={{ backgroundColor: "var(--workbench-shell)" }}
+        >
+          {(Object.keys(CATEGORY_LABELS) as AgentCategory[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              disabled={sending}
+              onClick={() => setCategory(k)}
+              className={cn(
+                "shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                category === k
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+              )}
+            >
+              {CATEGORY_LABELS[k]}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div
         className="shrink-0 space-y-1.5 border-b border-border px-3 py-2"
@@ -443,12 +579,13 @@ export function AgentPanel({
           <div className="rounded-lg border border-border/40 bg-muted/20 p-3 text-xs leading-relaxed text-muted-foreground">
             <p className="mb-1.5 font-medium text-foreground">How this works</p>
             <p className="mb-2">
-              Messages include your workbook context (visible range, series, crosshair). Pick a category, set a model id,
-              then ask below.
+              <strong>Chat</strong> — messages include your workbook context (visible range, series, crosshair). Pick a category, set a model id, then ask below.
+            </p>
+            <p className="mb-2">
+              <strong>Summarize</strong> — paste any URL to fetch and summarize the page with your configured AI provider. After summarizing, switch back to Chat to ask follow-up questions.
             </p>
             <p className="text-[11px] text-muted-foreground/90">
-              Configure the assistant under the panel menu → Preferences, or the sidebar Preferences entry. Choose OpenRouter
-              or a local OpenAI-compatible API.
+              Configure AI providers under the panel menu → Preferences. Supports OpenRouter, Routstr, or a local OpenAI-compatible API.
             </p>
           </div>
         ) : null}
@@ -492,31 +629,79 @@ export function AgentPanel({
         className="shrink-0 space-y-2 border-t border-border/40 p-3"
         style={{ backgroundColor: "var(--workbench-shell)" }}
       >
-        <div className="flex gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                void send()
-              }
-            }}
-            placeholder="Follow-up… (Enter send, Shift+Enter newline)"
-            rows={variant === "mobile" ? 3 : 2}
-            disabled={sending || !chatReady}
-            className="min-h-[44px] flex-1 resize-none rounded-md border border-border/50 bg-white/[0.06] px-2 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/50 focus:ring-1 focus:ring-ring/40"
-          />
-          <button
-            type="button"
-            disabled={sending || !input.trim() || !chatReady}
-            onClick={() => void send()}
-            className="shrink-0 self-end rounded-md bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
-            title="Send"
-          >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </button>
-        </div>
+        {panelMode === "summarize" ? (
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={summarizeUrl}
+                onChange={(e) => setSummarizeUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void summarize() }
+                }}
+                placeholder="https://example.com/article"
+                disabled={summarizing || !chatReady}
+                className="min-h-[36px] flex-1 rounded-md border border-border/50 bg-white/[0.06] px-2 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/50 focus:ring-1 focus:ring-ring/40"
+              />
+              <button
+                type="button"
+                disabled={summarizing || !summarizeUrl.trim() || !chatReady}
+                onClick={() => void summarize()}
+                className="shrink-0 rounded-md bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                title="Summarize"
+              >
+                {summarizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+              </button>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              <span>Length:</span>
+              {(Object.keys(SUMMARIZE_LENGTH_LABELS) as SummarizeLength[]).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setSummarizeLength(k)}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 transition-colors",
+                    summarizeLength === k
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-accent/50 hover:text-accent-foreground"
+                  )}
+                >
+                  {SUMMARIZE_LENGTH_LABELS[k]}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground/70">
+              Fetches the page server-side and summarizes with your configured AI provider. After summarizing, switch to Chat for follow-up questions.
+            </p>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault()
+                  void send()
+                }
+              }}
+              placeholder="Follow-up… (Enter send, Shift+Enter newline)"
+              rows={variant === "mobile" ? 3 : 2}
+              disabled={sending || !chatReady}
+              className="min-h-[44px] flex-1 resize-none rounded-md border border-border/50 bg-white/[0.06] px-2 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/50 focus:ring-1 focus:ring-ring/40"
+            />
+            <button
+              type="button"
+              disabled={sending || !input.trim() || !chatReady}
+              onClick={() => void send()}
+              className="shrink-0 self-end rounded-md bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              title="Send"
+            >
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </button>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
           <button
             type="button"
