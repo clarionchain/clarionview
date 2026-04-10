@@ -19,7 +19,9 @@ export function normalizeOpenAiV1Base(
     return { ok: false, error: "This host is not allowed" }
   }
   let path = u.pathname.replace(/\/$/, "") || ""
-  if (!path.endsWith("/v1")) {
+  // Treat /v1 as a path segment anywhere (e.g. /v1/cc_llm_ollama is already a valid base)
+  const hasV1Segment = path === "/v1" || path.endsWith("/v1") || path.includes("/v1/")
+  if (!hasV1Segment) {
     path = `${path}/v1`.replace(/\/+/g, "/")
     if (!path.startsWith("/")) path = `/${path}`
   }
