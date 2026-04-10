@@ -137,22 +137,31 @@ export async function GET() {
       if (k) headers.Authorization = `Bearer ${k}`
     }
 
-    const upstream = await fetch(`${norm.base}/models`, { headers })
-    if (!upstream.ok) {
-      const t = await upstream.text()
-      return NextResponse.json(
-        {
-          error: "Could not list models from local server",
-          detail: t.length > 800 ? `${t.slice(0, 800)}…` : t,
-          models: [] as ListedModel[],
-          chatReady: true,
-          provider: "local",
-        },
-        { status: 502 }
-      )
+    const upstream = await fetch(`${norm.base}/models`, { headers }).catch(() => null)
+    if (!upstream || !upstream.ok) {
+      // Model listing failed but chat may still work — return chatReady: true with empty list
+      return NextResponse.json({
+        models: [] as ListedModel[],
+        cached: false,
+        listSource: "local",
+        chatReady: true,
+        provider: "local",
+      })
     }
 
-    const json = await upstream.json()
+    let json: unknown
+    try {
+      json = await upstream.json()
+    } catch {
+      // Server returned non-JSON (e.g. HTML error page) — chat may still work
+      return NextResponse.json({
+        models: [] as ListedModel[],
+        cached: false,
+        listSource: "local",
+        chatReady: true,
+        provider: "local",
+      })
+    }
     const models = parseModelsPayload(json)
     cache = { expires: now + TTL_MS, models, cacheKey }
     return NextResponse.json({
