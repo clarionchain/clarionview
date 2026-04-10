@@ -14,9 +14,21 @@ interface MetricModalProps {
   onClose: () => void
 }
 
+interface SearchResult {
+  name: string
+  display?: string
+}
+
+function getDisplay(r: SearchResult): string {
+  if (r.display) return r.display
+  if (r.name.startsWith("yf:")) return r.name.slice(3)
+  if (r.name.startsWith("fred:")) return r.name.slice(5)
+  return formatSeriesName(r.name)
+}
+
 export function MetricModal({ open, activeNames, loading, onAdd, onClose }: MetricModalProps) {
   const [search, setSearch] = useState("")
-  const [searchResults, setSearchResults] = useState<string[]>([])
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
@@ -42,7 +54,14 @@ export function MetricModal({ open, activeNames, loading, onAdd, onClose }: Metr
         credentials: "include",
       })
         .then((r) => r.json())
-        .then((data: string[]) => setSearchResults(data))
+        .then((data: SearchResult[] | string[]) => {
+            // Handle both old (string[]) and new ({name, display?}[]) API formats
+            if (Array.isArray(data) && data.length > 0 && typeof data[0] === "string") {
+              setSearchResults((data as string[]).map((name) => ({ name })))
+            } else {
+              setSearchResults(data as SearchResult[])
+            }
+          })
         .catch(() => setSearchResults([]))
         .finally(() => setSearching(false))
     }, 300)
@@ -123,14 +142,14 @@ export function MetricModal({ open, activeNames, loading, onAdd, onClose }: Metr
                   No series found for &ldquo;{search}&rdquo;
                 </div>
               )}
-              {searchResults.map((name) => (
+              {searchResults.map((r) => (
                 <MetricRow
-                  key={name}
-                  name={name}
-                  display={formatSeriesName(name)}
-                  active={isActive(name)}
-                  loading={isLoading(name)}
-                  onAdd={() => handleAdd(name, formatSeriesName(name))}
+                  key={r.name}
+                  name={r.name}
+                  display={getDisplay(r)}
+                  active={isActive(r.name)}
+                  loading={isLoading(r.name)}
+                  onAdd={() => handleAdd(r.name, getDisplay(r))}
                 />
               ))}
             </div>
