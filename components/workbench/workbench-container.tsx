@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import dynamic from "next/dynamic"
-import { Save, Loader2, TrendingUp, Plus, Check, Pencil, Sparkles } from "lucide-react"
+import { Save, Loader2, TrendingUp, Plus, Check, Pencil, Brain } from "lucide-react"
 import { AgentPanel } from "@/components/workbench/agent-panel"
+import { OnboardingModal } from "@/components/workbench/onboarding-modal"
 import type { TVChartHandle } from "@/components/workbench/tv-chart"
 import { MetricModal } from "./metric-modal"
 import { FormulaModal } from "./formula-modal"
@@ -98,6 +99,7 @@ export function WorkbenchContainer() {
   const [assistantPrefsLoaded, setAssistantPrefsLoaded] = useState(false)
   /** Wait for /api/account/me so we never fire series fetches against a dead session (avoids bogus banners + stale cached shell). */
   const [authGate, setAuthGate] = useState<"pending" | "ok">("pending")
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   const activeSeries: ActiveSeries[] = useMemo(() => {
     return configs.map((c) => {
@@ -206,6 +208,15 @@ export function WorkbenchContainer() {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  // Show onboarding if user has never completed it
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem("cv_onboarded")) {
+        setShowOnboarding(true)
+      }
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {
@@ -443,6 +454,18 @@ export function WorkbenchContainer() {
 
   return (
     <div className="-m-4 lg:-m-6 h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
+      {showOnboarding && (
+        <OnboardingModal
+          onComplete={() => {
+            try { localStorage.setItem("cv_onboarded", "1") } catch { /* ignore */ }
+            setShowOnboarding(false)
+          }}
+          onDismiss={() => {
+            try { localStorage.setItem("cv_onboarded", "1") } catch { /* ignore */ }
+            setShowOnboarding(false)
+          }}
+        />
+      )}
       {/* -- Toolbar (sticky inside scrollable main so Assistant/Save stay reachable) -- */}
       <div className="sticky top-0 z-30 flex h-10 shrink-0 items-center gap-2 border-b border-border/30 bg-card/80 px-3 backdrop-blur-md">
         {/* Editable workbook name */}
@@ -487,8 +510,8 @@ export function WorkbenchContainer() {
           )}
           title={assistantOpen ? "Hide assistant panel" : "Show assistant panel"}
         >
-          <Sparkles className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">Assistant</span>
+          <Brain className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">AI</span>
         </button>
 
         {/* Save with feedback */}
@@ -688,7 +711,7 @@ export function WorkbenchContainer() {
           aria-label="Open AI assistant panel"
           onClick={() => setAssistantOpen(true)}
         >
-          <Sparkles className="h-5 w-5" strokeWidth={1.75} />
+          <Brain className="h-5 w-5" strokeWidth={1.75} />
         </button>
       ) : null}
 
