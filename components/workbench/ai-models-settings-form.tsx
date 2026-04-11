@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { Cloud, Zap, Server } from "lucide-react"
+import { Cloud, Zap, Server, CheckCircle, XCircle, Loader2 } from "lucide-react"
 import { withBase } from "@/lib/base-path"
 import { cn } from "@/lib/utils"
 
@@ -42,6 +42,8 @@ export function AiModelsSettingsForm() {
   const [ok, setOk]                         = useState(false)
   const [submitting, setSubmitting]         = useState(false)
   const [defaultModel, setDefaultModel]     = useState("")
+  const [testResult, setTestResult]         = useState<{ ok: boolean; message: string; detail?: string } | null>(null)
+  const [testing, setTesting]               = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -128,6 +130,28 @@ export function AiModelsSettingsForm() {
       setMsg("Network error")
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function testConnection() {
+    setTestResult(null)
+    setTesting(true)
+    try {
+      const res = await fetch(withBase("/api/ai/local-test"), { credentials: "include" })
+      const j = (await res.json().catch(() => ({}))) as {
+        ok?: boolean; message?: string; error?: string; detail?: string
+        normalizedBase?: string; chatUrl?: string; modelsUrl?: string
+      }
+      if (j.ok) {
+        setTestResult({ ok: true, message: j.message ?? "Connected", detail: j.chatUrl ? `Chat: ${j.chatUrl}` : undefined })
+      } else {
+        const detail = [j.normalizedBase && `Base: ${j.normalizedBase}`, j.modelsUrl && `Tried: ${j.modelsUrl}`, j.detail].filter(Boolean).join("\n")
+        setTestResult({ ok: false, message: j.error ?? "Connection failed", detail: detail || undefined })
+      }
+    } catch {
+      setTestResult({ ok: false, message: "Network error — could not reach server" })
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -229,8 +253,27 @@ export function AiModelsSettingsForm() {
             />
           </div>
 
+          {/* Test result */}
+          {testResult && (
+            <div className={cn(
+              "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
+              testResult.ok
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : "border-red-500/30 bg-red-500/10 text-red-400"
+            )}>
+              {testResult.ok
+                ? <CheckCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                : <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              }
+              <div>
+                <p>{testResult.message}</p>
+                {testResult.detail && <p className="mt-0.5 font-mono opacity-70 whitespace-pre-wrap">{testResult.detail}</p>}
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               disabled={submitting}
@@ -239,6 +282,17 @@ export function AiModelsSettingsForm() {
             >
               {submitting ? "Saving…" : "Save"}
             </button>
+            {provider === "local" && (
+              <button
+                type="button"
+                disabled={testing || submitting}
+                onClick={testConnection}
+                className="rounded-md border border-border/50 bg-background/60 px-4 py-2 text-sm text-muted-foreground hover:bg-background/90 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {testing ? "Testing…" : "Test connection"}
+              </button>
+            )}
             {hasKey && (
               <button
                 type="button"
