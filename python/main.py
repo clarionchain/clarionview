@@ -10,6 +10,7 @@ import os
 import json
 import logging
 import asyncio
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -34,10 +35,12 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_DEFAULT_MODEL = os.getenv("OPENROUTER_DEFAULT_MODEL", "openai/gpt-4o-mini")
 REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "./data/reports"))
+INSIGHTS_DIR = Path(os.getenv("INSIGHTS_DIR", "./data/insights"))
 REPORT_HOUR_UTC = int(os.getenv("REPORT_HOUR_UTC", "2"))   # 2am UTC by default
 BITVIEW_BASE = "https://bitview.space"
 
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+INSIGHTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # App
@@ -535,6 +538,428 @@ def get_report(date: str):
 
 
 # ---------------------------------------------------------------------------
+# Mean Reversion Index (MRI)
+# ---------------------------------------------------------------------------
+
+MRI_PRICING_MODELS = [
+    "realized_price",
+    "true_market_mean",
+    "cointime_price",
+    "active_price",
+    "investor_price",
+    "vaulted_price",
+]
+
+_mri_cache: Optional[dict] = None
+_mri_cache_at: float = 0.0
+MRI_CACHE_TTL = 6 * 3600  # 6 hours
+
+
+async def _compute_mri_all() -> dict:
+    """Compute all MRI components and cache the result."""
+    global _mri_cache, _mri_cache_at
+    now = time.monotonic()
+    if _mri_cache is not None and (now - _mri_cache_at) < MRI_CACHE_TTL:
+        return _mri_cache
+
+    log.info("Computing MRI (fetching %d BitView series)...", len(MRI_PRICING_MODELS) + 1)
+    async with httpx.AsyncClient(timeout=30) as client:
+        tasks = [_fetch_bitview_series(client, "price")] + [
+            _fetch_bitview_series(client, m) for m in MRI_PRICING_MODELS
+        ]
+        results = await asyncio.gather(*tasks)
+
+    price = results[0]
+    df = pd.DataFrame({"price": price})
+    for i, name in enumerate(MRI_PRICING_MODELS):
+        df[name] = results[i + 1]
+    df = df.dropna()
+
+    if df.empty:
+        log.warning("MRI: no aligned data after dropna")
+        return {}
+
+    # Compute percentile ranks for each model ratio
+    # scipy rankdata returns all-NaN when any value is NaN/inf (scipy >= 1.14).
+    # Mask non-finite values and rank only the finite subset.
+    pct_cols: list[str] = []
+    for name in MRI_PRICING_MODELS:
+        ratio = (df["price"] / df[name]).values
+        pcts = np.full(len(ratio), np.nan, dtype=float)
+        mask = np.isfinite(ratio)
+        n_fin = int(mask.sum())
+        if n_fin > 1:
+            finite_vals = ratio[mask]
+            r = stats.rankdata(finite_vals, method="average")
+            pcts[mask] = (r - 1) / (n_fin - 1) * 100
+        col = f"_pct_{name}"
+        df[col] = pcts
+        pct_cols.append(col)
+
+    df["mri_index"] = df[pct_cols].mean(axis=1, skipna=True)
+    df["mri_ceiling"] = df[pct_cols].max(axis=1, skipna=True)
+    df["mri_floor"] = df[pct_cols].min(axis=1, skipna=True)
+    df["mri_spread"] = df["mri_ceiling"] - df["mri_floor"]
+    df["mri_slow"] = df["mri_index"].rolling(30, min_periods=1).mean()
+
+    def to_list(col: str) -> list:
+        return [
+            {"time": t.strftime("%Y-%m-%d"), "value": round(float(v), 2)}
+            for t, v in df[col].items()
+            if np.isfinite(v)
+        ]
+
+    result = {
+        "mri_index":   to_list("mri_index"),
+        "mri_fast":    to_list("mri_index"),   # same as index, daily resolution
+        "mri_slow":    to_list("mri_slow"),
+        "mri_ceiling": to_list("mri_ceiling"),
+        "mri_floor":   to_list("mri_floor"),
+        "mri_spread":  to_list("mri_spread"),
+    }
+    _mri_cache = result
+    _mri_cache_at = now
+    log.info("MRI computed: %d data points", len(result["mri_index"]))
+    return result
+
+
+@app.get("/data/mri")
+async def get_mri(component: str = "mri_index"):
+    valid = {"mri_index", "mri_fast", "mri_slow", "mri_ceiling", "mri_floor", "mri_spread"}
+    if component not in valid:
+        raise HTTPException(status_code=400, detail=f"component must be one of {sorted(valid)}")
+    try:
+        all_comp = await _compute_mri_all()
+        if not all_comp:
+            raise HTTPException(status_code=503, detail="MRI data unavailable — BitView series may be empty")
+        data = all_comp.get(component, [])
+        return {"data": data, "total": len(data), "component": component}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("MRI endpoint error: %s", e)
+        raise HTTPException(status_code=500, detail=f"MRI computation failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Insights
+# ---------------------------------------------------------------------------
+
+_insights_generating = False
+
+
+def _detect_signals(bv: dict, mri_components: dict) -> list:
+    """Rule-based signal detection from on-chain metrics."""
+    signals = []
+
+    price_s = bv.get("price", pd.Series(dtype=float)).dropna()
+    mvrv_s = bv.get("mvrv", pd.Series(dtype=float)).dropna()
+    nupl_s = bv.get("nupl", pd.Series(dtype=float)).dropna()
+    sopr_s = bv.get("sopr_24h", pd.Series(dtype=float)).dropna()
+
+    mri_data = mri_components.get("mri_index", [])
+    mri_val = mri_data[-1]["value"] if mri_data else None
+
+    # --- Price change signals ---
+    if len(price_s) >= 2:
+        chg_1d = _pct_change(price_s, 1)
+        if chg_1d is not None and abs(chg_1d) >= 5:
+            direction = "surged" if chg_1d > 0 else "dropped"
+            signals.append({
+                "type": "price_move",
+                "level": "warning" if abs(chg_1d) >= 10 else "info",
+                "title": f"Bitcoin {direction} {abs(chg_1d):.1f}% in 24h",
+                "body": f"BTC price moved {chg_1d:+.1f}% in the past 24 hours, reaching ${price_s.iloc[-1]:,.0f}.",
+                "metric": "price",
+                "value": round(float(price_s.iloc[-1]), 2),
+            })
+
+    # --- MRI signals ---
+    if mri_val is not None:
+        if mri_val >= 90:
+            signals.append({
+                "type": "mri_extreme_overbought",
+                "level": "critical",
+                "title": "MRI: Extreme Overbought",
+                "body": f"Mean Reversion Index at {mri_val:.1f} — in the top 10% of all historical readings. Bitcoin is significantly overextended relative to pricing models. Past readings this high have preceded major corrections.",
+                "metric": "mri_index",
+                "value": mri_val,
+            })
+        elif mri_val >= 75:
+            signals.append({
+                "type": "mri_overbought",
+                "level": "warning",
+                "title": "MRI: Entering Overbought Zone",
+                "body": f"Mean Reversion Index at {mri_val:.1f} — approaching historically elevated levels (>75). Monitor for signs of exhaustion.",
+                "metric": "mri_index",
+                "value": mri_val,
+            })
+        elif mri_val <= 10:
+            signals.append({
+                "type": "mri_extreme_oversold",
+                "level": "critical",
+                "title": "MRI: Extreme Oversold",
+                "body": f"Mean Reversion Index at {mri_val:.1f} — in the bottom 10% of all historical readings. Bitcoin is deeply undervalued relative to pricing models. Past readings this low have preceded strong recoveries.",
+                "metric": "mri_index",
+                "value": mri_val,
+            })
+        elif mri_val <= 25:
+            signals.append({
+                "type": "mri_oversold",
+                "level": "warning",
+                "title": "MRI: Entering Oversold Zone",
+                "body": f"Mean Reversion Index at {mri_val:.1f} — in historically depressed territory (<25). May represent an accumulation opportunity.",
+                "metric": "mri_index",
+                "value": mri_val,
+            })
+        else:
+            signals.append({
+                "type": "mri_neutral",
+                "level": "info",
+                "title": f"MRI: Neutral ({mri_val:.1f})",
+                "body": f"Mean Reversion Index at {mri_val:.1f} — within the normal range (25–75). Bitcoin is fairly valued relative to its historical pricing model distribution.",
+                "metric": "mri_index",
+                "value": mri_val,
+            })
+
+    # --- MVRV signals ---
+    if not mvrv_s.empty:
+        mvrv = float(mvrv_s.iloc[-1])
+        if mvrv >= 3.5:
+            signals.append({
+                "type": "mvrv_high",
+                "level": "warning",
+                "title": f"MVRV at {mvrv:.2f} — Historically Elevated",
+                "body": f"MVRV Ratio of {mvrv:.2f} indicates market value is {mvrv:.1f}× realized value. Readings above 3.5 have historically coincided with cycle peaks.",
+                "metric": "mvrv",
+                "value": mvrv,
+            })
+        elif mvrv < 1.0:
+            signals.append({
+                "type": "mvrv_capitulation",
+                "level": "critical",
+                "title": f"MVRV Below 1 — Capitulation Zone",
+                "body": f"MVRV Ratio at {mvrv:.2f} — market value below realized value. Historically a rare buying opportunity associated with bear market bottoms.",
+                "metric": "mvrv",
+                "value": mvrv,
+            })
+
+    # --- NUPL signals ---
+    if not nupl_s.empty:
+        nupl = float(nupl_s.iloc[-1])
+        if nupl >= 0.75:
+            signals.append({
+                "type": "nupl_euphoria",
+                "level": "warning",
+                "title": f"NUPL: Euphoria/Greed ({nupl:.2f})",
+                "body": f"Net Unrealized Profit/Loss at {nupl:.2f} — in the greed/euphoria zone. The average holder is sitting on substantial unrealized gains, a historically cautionary signal.",
+                "metric": "nupl",
+                "value": nupl,
+            })
+        elif nupl < 0:
+            signals.append({
+                "type": "nupl_capitulation",
+                "level": "critical",
+                "title": f"NUPL: Market in Loss ({nupl:.2f})",
+                "body": f"NUPL at {nupl:.2f} — the average holder is underwater. This level has historically marked major market bottoms.",
+                "metric": "nupl",
+                "value": nupl,
+            })
+
+    # --- SOPR signals ---
+    if not sopr_s.empty:
+        sopr = float(sopr_s.iloc[-1])
+        if sopr >= 1.05:
+            signals.append({
+                "type": "sopr_profit_taking",
+                "level": "info",
+                "title": f"SOPR: Active Profit Taking ({sopr:.3f})",
+                "body": f"SOPR at {sopr:.3f} — coins being spent were acquired at lower prices. Elevated readings indicate broad profit-taking activity.",
+                "metric": "sopr_24h",
+                "value": sopr,
+            })
+        elif sopr < 0.97:
+            signals.append({
+                "type": "sopr_loss_selling",
+                "level": "warning",
+                "title": f"SOPR: Selling at a Loss ({sopr:.3f})",
+                "body": f"SOPR at {sopr:.3f} — coins being spent were acquired at higher prices. Sustained loss-selling can indicate capitulation or weak-hand flushing.",
+                "metric": "sopr_24h",
+                "value": sopr,
+            })
+
+    return signals
+
+
+async def generate_insights() -> dict:
+    """Generate daily insights from on-chain metrics."""
+    global _insights_generating
+    if _insights_generating:
+        return {"error": "Insights already generating"}
+
+    _insights_generating = True
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    log.info("Generating insights for %s", today)
+
+    try:
+        # Fetch BitView series
+        bv_names = [
+            "price", "mvrv", "nupl", "sopr_24h", "realized_price",
+            "true_market_mean", "hash_rate", "puell_multiple",
+            "lth_supply", "sth_supply", "supply_in_profit",
+        ]
+        async with httpx.AsyncClient(timeout=30) as client:
+            bv_tasks = [_fetch_bitview_series(client, n) for n in bv_names]
+            bv_results = await asyncio.gather(*bv_tasks)
+        bv = {s.name: s for s in bv_results}
+
+        # Get MRI
+        try:
+            mri_components = await _compute_mri_all()
+        except Exception as e:
+            log.warning("MRI unavailable for insights: %s", e)
+            mri_components = {}
+
+        # Detect signals
+        signals = _detect_signals(bv, mri_components)
+
+        # Snapshot of current values
+        price_s = bv.get("price", pd.Series(dtype=float)).dropna()
+        snapshot = {}
+        for k, s in bv.items():
+            clean = s.dropna()
+            if not clean.empty:
+                snapshot[k] = round(float(clean.iloc[-1]), 6)
+        mri_data = mri_components.get("mri_index", [])
+        if mri_data:
+            snapshot["mri_index"] = mri_data[-1]["value"]
+
+        # Period changes
+        changes = {}
+        if not price_s.empty:
+            for period, days in [("1d", 1), ("7d", 7), ("30d", 30)]:
+                ch = _pct_change(price_s, days)
+                if ch is not None:
+                    changes[period] = ch
+
+        # Optional LLM narrative for the top signals
+        narrative = ""
+        if OPENROUTER_API_KEY and signals:
+            top_signals = signals[:5]
+            signal_text = "\n".join(
+                f"- [{s['level'].upper()}] {s['title']}: {s['body']}" for s in top_signals
+            )
+            price_val = snapshot.get("price", "N/A")
+            prompt = (
+                f"Bitcoin price: ${price_val:,.0f}\n"
+                f"Price changes: {changes}\n\n"
+                f"Today's signals:\n{signal_text}\n\n"
+                "Write a 2-3 sentence market insight summary. Be concise, data-driven, and direct. "
+                "Focus on what the signals mean in combination. No price predictions."
+            )
+            try:
+                resp = httpx.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    json={
+                        "model": OPENROUTER_DEFAULT_MODEL,
+                        "messages": [
+                            {"role": "system", "content": "You are a concise Bitcoin market analyst."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "max_tokens": 300,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                narrative = resp.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                log.warning("Insights LLM narrative failed: %s", e)
+
+        insight = {
+            "date": today,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "signals": signals,
+            "snapshot": snapshot,
+            "changes": changes,
+            "narrative": narrative,
+            "status": "completed",
+        }
+
+        path = INSIGHTS_DIR / f"{today}.json"
+        path.write_text(json.dumps(insight, indent=2), encoding="utf-8")
+        log.info("Insights saved to %s (%d signals)", path, len(signals))
+        return insight
+
+    except Exception as e:
+        log.error("Insights generation failed: %s", e)
+        return {
+            "date": today,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "signals": [],
+            "snapshot": {},
+            "changes": {},
+            "narrative": "",
+            "status": "error",
+            "error": str(e),
+        }
+    finally:
+        _insights_generating = False
+
+
+@app.post("/insights/generate")
+async def trigger_insights(background_tasks: BackgroundTasks):
+    global _insights_generating
+    if _insights_generating:
+        return JSONResponse({"status": "already_generating"}, status_code=202)
+    background_tasks.add_task(generate_insights)
+    return {"status": "started"}
+
+
+@app.get("/insights/list")
+def list_insights():
+    files = sorted(INSIGHTS_DIR.glob("*.json"), reverse=True)
+    result = []
+    for p in files[:90]:
+        try:
+            meta = json.loads(p.read_text(encoding="utf-8"))
+            result.append({
+                "date": meta.get("date", p.stem),
+                "generated_at": meta.get("generated_at"),
+                "signal_count": len(meta.get("signals", [])),
+                "status": meta.get("status", "unknown"),
+            })
+        except Exception:
+            result.append({"date": p.stem, "generated_at": None, "signal_count": 0, "status": "unknown"})
+    return result
+
+
+@app.get("/insights/latest")
+def get_latest_insight():
+    files = sorted(INSIGHTS_DIR.glob("*.json"), reverse=True)
+    if not files:
+        raise HTTPException(status_code=404, detail="No insights generated yet")
+    try:
+        return json.loads(files[0].read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read insight: {e}")
+
+
+@app.get("/insights/{date}")
+def get_insight(date: str):
+    path = INSIGHTS_DIR / f"{date}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"No insight found for {date}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read insight: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 
@@ -552,8 +977,17 @@ async def startup():
         replace_existing=True,
         misfire_grace_time=3600,
     )
+    scheduler.add_job(
+        generate_insights,
+        trigger="cron",
+        hour=REPORT_HOUR_UTC,
+        minute=30,
+        id="daily_insights",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
     scheduler.start()
-    log.info("Scheduler started — overnight report at %02d:00 UTC", REPORT_HOUR_UTC)
+    log.info("Scheduler started — overnight report at %02d:00 UTC, insights at %02d:30 UTC", REPORT_HOUR_UTC, REPORT_HOUR_UTC)
 
 
 @app.on_event("shutdown")

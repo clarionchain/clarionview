@@ -109,6 +109,14 @@ export async function GET(req: NextRequest) {
     return fetchFromAnalytics("/data/fred", { series })
   }
 
+  // ── Mean Reversion Index (mri_*) ──────────────────────────────────────────
+  const MRI_COMPONENTS = new Set([
+    "mri_index", "mri_fast", "mri_slow", "mri_ceiling", "mri_floor", "mri_spread",
+  ])
+  if (MRI_COMPONENTS.has(name)) {
+    return fetchFromAnalytics("/data/mri", { component: name })
+  }
+
   // ── BitView on-chain series (default) ─────────────────────────────────────
   try {
     const upstream = upstreamSeriesName(name)

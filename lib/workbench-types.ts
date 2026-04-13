@@ -155,6 +155,17 @@ export function uid(): string {
 
 export const METRIC_CATEGORIES = [
   {
+    name: "Mean Reversion Index",
+    metrics: [
+      { name: "mri_index",   display: "MRI Index" },
+      { name: "mri_fast",    display: "MRI Fast" },
+      { name: "mri_slow",    display: "MRI Slow (30D)" },
+      { name: "mri_ceiling", display: "MRI Ceiling" },
+      { name: "mri_floor",   display: "MRI Floor" },
+      { name: "mri_spread",  display: "MRI Spread" },
+    ],
+  },
+  {
     name: "Price",
     metrics: [
       { name: "price", display: "Price (USD)" },

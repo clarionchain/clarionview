@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation"
 import {
   FlaskConical,
   FileText,
-  BarChart3,
   BookOpen,
   ChevronLeft,
   ChevronRight,
@@ -32,10 +31,11 @@ import { useWorkbenchSettings } from "@/lib/workbench-settings-dialog-context"
 import { WORKBOOK_TEMPLATES } from "@/lib/workbook-templates"
 
 const DASHBOARDS = [
-  { id: "etf",      label: "Bitcoin ETFs",         href: "/dashboards/etf" },
-  { id: "mining",   label: "Mining Companies",      href: "/dashboards/mining" },
+  { id: "insights", label: "Insights",               href: "/dashboards/insights" },
+  { id: "etf",      label: "Bitcoin ETFs",            href: "/dashboards/etf" },
+  { id: "mining",   label: "Mining Companies",        href: "/dashboards/mining" },
   { id: "macro",    label: "Federal Reserve / Macro", href: "/dashboards/macro" },
-  { id: "strategy", label: "Strategy & Treasury",   href: "/dashboards/strategy" },
+  { id: "strategy", label: "Strategy & Treasury",     href: "/dashboards/strategy" },
 ]
 
 export function AppSidebar({ className }: { className?: string }) {
@@ -338,39 +338,6 @@ export function AppSidebar({ className }: { className?: string }) {
             </button>
           )}
 
-          {/* ── Admin: Users ── */}
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => router.push(withBase("/admin/users"))}
-                  className={cn(
-                    "flex items-center justify-center w-full rounded-md px-2 py-2 transition-colors",
-                    pathname === withBase("/admin/users")
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground/50 hover:bg-accent hover:text-accent-foreground"
-                  )}
-                >
-                  <BarChart3 className="h-4 w-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>Admin: Users</TooltipContent>
-            </Tooltip>
-          ) : (
-            <button
-              onClick={() => router.push(withBase("/admin/users"))}
-              className={cn(
-                "flex items-center gap-2.5 w-full rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                pathname === withBase("/admin/users")
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground/40 hover:bg-accent/30 hover:text-muted-foreground"
-              )}
-            >
-              <BarChart3 className="h-4 w-4 shrink-0" />
-              <span className="flex-1 text-left">Users</span>
-              <span className="text-[10px] text-muted-foreground/30">Admin</span>
-            </button>
-          )}
         </div>
 
         <Separator />
@@ -397,7 +364,7 @@ export function AppSidebar({ className }: { className?: string }) {
               className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground/60 transition-colors hover:bg-accent/30 hover:text-foreground"
             >
               <Settings className="h-4 w-4 shrink-0" />
-              <span className="flex-1 text-left text-xs">Preferences</span>
+              <span className="flex-1 text-left text-xs">Settings</span>
             </button>
           )}
           <Tooltip>

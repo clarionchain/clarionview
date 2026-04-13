@@ -53,9 +53,23 @@ export function getDb(): Database.Database {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_ai_usage_user_created ON ai_usage_log(user_id, created_at);
+    CREATE TABLE IF NOT EXISTS passkeys (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      public_key TEXT NOT NULL,
+      sign_count INTEGER NOT NULL DEFAULT 0,
+      transports TEXT,
+      device_type TEXT,
+      backed_up INTEGER NOT NULL DEFAULT 0,
+      name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
   `)
   migrateUsersIsAdmin(db)
   migrateUserAiColumns(db)
+  migrateUsersEmail(db)
   bootstrapAdminUser(db)
   dbInstance = db
   return db
@@ -70,6 +84,13 @@ function migrateUsersIsAdmin(db: Database.Database) {
   const up = db.prepare("UPDATE users SET is_admin = 1 WHERE username = ?").run(adminName)
   if (up.changes === 0) {
     db.prepare("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users)").run()
+  }
+}
+
+function migrateUsersEmail(db: Database.Database) {
+  const cols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[]
+  if (!cols.some((c) => c.name === "email")) {
+    db.exec("ALTER TABLE users ADD COLUMN email TEXT")
   }
 }
 
@@ -270,6 +291,117 @@ export function adminUpdateUser(
     db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(newHash, targetId)
   }
   return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// Email
+// ---------------------------------------------------------------------------
+
+export function getUserEmail(userId: number): string | null {
+  const db = getDb()
+  const row = db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string | null } | undefined
+  return row?.email ?? null
+}
+
+export function setUserEmail(userId: number, email: string | null): void {
+  getDb().prepare("UPDATE users SET email = ? WHERE id = ?").run(email, userId)
+}
+
+export function getUserByEmail(email: string): { id: number; username: string } | null {
+  const db = getDb()
+  const row = db.prepare("SELECT id, username FROM users WHERE lower(email) = lower(?)").get(email.trim()) as
+    | { id: number; username: string }
+    | undefined
+  return row ?? null
+}
+
+// ---------------------------------------------------------------------------
+// Passkeys
+// ---------------------------------------------------------------------------
+
+export interface StoredPasskey {
+  id: string
+  userId: number
+  publicKey: string
+  signCount: number
+  transports: string[] | null
+  deviceType: string | null
+  backedUp: boolean
+  name: string | null
+  createdAt: string
+}
+
+export function listPasskeysForUser(userId: number): StoredPasskey[] {
+  const db = getDb()
+  const rows = db
+    .prepare("SELECT id, user_id, public_key, sign_count, transports, device_type, backed_up, name, created_at FROM passkeys WHERE user_id = ? ORDER BY created_at DESC")
+    .all(userId) as {
+      id: string; user_id: number; public_key: string; sign_count: number
+      transports: string | null; device_type: string | null; backed_up: number; name: string | null; created_at: string
+    }[]
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    publicKey: r.public_key,
+    signCount: r.sign_count,
+    transports: r.transports ? JSON.parse(r.transports) : null,
+    deviceType: r.device_type,
+    backedUp: r.backed_up === 1,
+    name: r.name,
+    createdAt: r.created_at,
+  }))
+}
+
+export function getPasskeyById(credentialId: string): StoredPasskey | null {
+  const db = getDb()
+  const r = db.prepare("SELECT id, user_id, public_key, sign_count, transports, device_type, backed_up, name, created_at FROM passkeys WHERE id = ?").get(credentialId) as {
+    id: string; user_id: number; public_key: string; sign_count: number
+    transports: string | null; device_type: string | null; backed_up: number; name: string | null; created_at: string
+  } | undefined
+  if (!r) return null
+  return {
+    id: r.id,
+    userId: r.user_id,
+    publicKey: r.public_key,
+    signCount: r.sign_count,
+    transports: r.transports ? JSON.parse(r.transports) : null,
+    deviceType: r.device_type,
+    backedUp: r.backed_up === 1,
+    name: r.name,
+    createdAt: r.created_at,
+  }
+}
+
+export function savePasskey(passkey: {
+  id: string; userId: number; publicKey: string; signCount: number
+  transports?: string[] | null; deviceType?: string | null; backedUp?: boolean; name?: string | null
+}): void {
+  const db = getDb()
+  db.prepare(`
+    INSERT INTO passkeys (id, user_id, public_key, sign_count, transports, device_type, backed_up, name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      sign_count = excluded.sign_count,
+      backed_up = excluded.backed_up
+  `).run(
+    passkey.id,
+    passkey.userId,
+    passkey.publicKey,
+    passkey.signCount,
+    passkey.transports ? JSON.stringify(passkey.transports) : null,
+    passkey.deviceType ?? null,
+    passkey.backedUp ? 1 : 0,
+    passkey.name ?? null,
+  )
+}
+
+export function updatePasskeySignCount(id: string, signCount: number): void {
+  getDb().prepare("UPDATE passkeys SET sign_count = ? WHERE id = ?").run(signCount, id)
+}
+
+export function deletePasskey(id: string, userId: number): boolean {
+  const r = getDb().prepare("DELETE FROM passkeys WHERE id = ? AND user_id = ?").run(id, userId)
+  return r.changes > 0
 }
 
 export function adminDeleteUser(

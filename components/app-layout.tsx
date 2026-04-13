@@ -25,7 +25,8 @@ import { WORKBOOK_TEMPLATES } from "@/lib/workbook-templates"
 import { cn } from "@/lib/utils"
 
 const DASHBOARDS = [
-  { id: "etf",      label: "Bitcoin ETFs",           href: "/dashboards/etf" },
+  { id: "insights", label: "Insights",               href: "/dashboards/insights" },
+  { id: "etf",      label: "Bitcoin ETFs",            href: "/dashboards/etf" },
   { id: "mining",   label: "Mining Companies",        href: "/dashboards/mining" },
   { id: "macro",    label: "Federal Reserve / Macro", href: "/dashboards/macro" },
   { id: "strategy", label: "Strategy & Treasury",     href: "/dashboards/strategy" },
@@ -200,7 +201,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             className="flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground/80 transition-colors hover:bg-accent/30 hover:text-foreground"
           >
             <Settings className="h-5 w-5 shrink-0" />
-            <span className="flex-1 text-left">Preferences</span>
+            <span className="flex-1 text-left">Settings</span>
           </button>
           <button
             type="button"

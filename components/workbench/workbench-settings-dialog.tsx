@@ -10,6 +10,8 @@ import {
 import { withBase } from "@/lib/base-path"
 import { cn } from "@/lib/utils"
 import { ChangePasswordForm } from "@/components/account/change-password-form"
+import { PasskeySettingsForm } from "@/components/account/passkey-settings-form"
+import { EmailSettingsForm } from "@/components/account/email-settings-form"
 import { AiModelsSettingsForm } from "@/components/workbench/ai-models-settings-form"
 
 const TABS: { id: WorkbenchSettingsTab; label: string }[] = [
@@ -66,7 +68,7 @@ export function WorkbenchSettingsDialog() {
         type="button"
         className="absolute inset-0 backdrop-blur-[2px]"
         style={{ backgroundColor: "color-mix(in srgb, var(--workbench-shell) 72%, transparent)" }}
-        aria-label="Close preferences"
+        aria-label="Close settings"
         onClick={closeSettings}
       />
       <div
@@ -77,7 +79,7 @@ export function WorkbenchSettingsDialog() {
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
           <h2 id="workbench-settings-title" className="min-w-0 flex-1 text-sm font-semibold tracking-tight text-foreground">
-            Preferences
+            Settings
           </h2>
           <button
             type="button"
@@ -110,6 +112,8 @@ export function WorkbenchSettingsDialog() {
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {tab === "account" ? (
             <div className="space-y-6">
+              <PasskeySettingsForm />
+              <EmailSettingsForm />
               <ChangePasswordForm title="Password" />
             </div>
           ) : null}
