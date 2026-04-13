@@ -7,7 +7,8 @@ const ALLOWED_ROLES = new Set(["system", "user", "assistant", "tool"])
 const MAX_CHART_CONTEXT_CHARS = 48_000
 const MAX_MESSAGES = 80
 
-type ChatMessage = { role: string; content: string }
+type ChatMessageContent = string | { type: string; text?: string; image_url?: { url: string } }[]
+type ChatMessage = { role: string; content: ChatMessageContent }
 
 function mergeChartContext(messages: ChatMessage[], chartContext: unknown): ChatMessage[] | null {
   if (chartContext === undefined) return messages
@@ -33,10 +34,17 @@ function validateMessages(raw: unknown): ChatMessage[] | null {
     if (!m || typeof m !== "object") return null
     const role = (m as { role?: unknown }).role
     const content = (m as { content?: unknown }).content
-    if (typeof role !== "string" || typeof content !== "string") return null
+    if (typeof role !== "string") return null
     if (!ALLOWED_ROLES.has(role)) return null
-    if (content.length > 200_000) return null
-    out.push({ role, content })
+    if (typeof content === "string") {
+      if (content.length > 200_000) return null
+      out.push({ role, content })
+    } else if (Array.isArray(content)) {
+      // Vision message — array of {type, text?, image_url?}
+      out.push({ role, content: content as ChatMessageContent })
+    } else {
+      return null
+    }
   }
   return out
 }

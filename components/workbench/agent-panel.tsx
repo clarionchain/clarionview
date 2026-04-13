@@ -30,12 +30,19 @@ const CATEGORY_LABELS: Record<AgentCategory, string> = {
 
 const CATEGORY_SYSTEM: Record<AgentCategory, string> = {
   market:
-    "You are a market-focused analyst. Use the structured chart context provided separately. Be concise; state uncertainty when data is missing or ambiguous.",
-  edu: "You are an educator. Explain concepts clearly; tie explanations to the chart metrics when the user asks about the workbench.",
+    "You are a market-focused analyst. Analyze the chart image provided. Be concise and direct. State uncertainty when data is ambiguous.",
+  edu: "You are an educator. Analyze the chart image and explain what it shows clearly, including what each metric means and what the current readings imply.",
   trade:
-    "You discuss markets and risk. Nothing here is financial advice. Use only the supplied chart context for factual claims about the data.",
+    "You discuss markets and risk. Analyze the chart image for trading-relevant observations. Nothing here is financial advice.",
   technical:
-    "You focus on quantitative reading: trends, ranges, pane scales, and relationships between series in the provided context.",
+    "You focus on quantitative technical analysis. Analyze the chart image: identify trends, key levels, momentum, and notable patterns across all visible series.",
+}
+
+const CATEGORY_PROMPT: Record<AgentCategory, string> = {
+  market: "Analyze this chart. What are the key market signals and what do they suggest about current conditions?",
+  edu: "Analyze this chart and explain what each metric shows. What is the current reading telling us?",
+  trade: "Analyze this chart from a trading perspective. What are the key levels, trends, and risk considerations?",
+  technical: "Perform a technical analysis of this chart. Identify trends, momentum, key levels, and any notable patterns.",
 }
 
 const MAX_THREAD_MESSAGES = 36
@@ -71,6 +78,7 @@ export function AgentPanel({
   const [thread, setThread] = useState<ThreadTurn[]>([])
   const [input, setInput] = useState("")
   const [model, setModel] = useState("")
+  const [analyzing, setAnalyzing] = useState(false)
   const [summarizeLength, setSummarizeLength] = useState<SummarizeLength>("medium")
   const [chatReady, setChatReady] = useState(true)
   const [chatHint, setChatHint] = useState<string | null>(null)
@@ -311,6 +319,84 @@ export function AgentPanel({
 
   useEffect(() => { scrollToBottom() }, [thread, scrollToBottom])
 
+  const analyzeChart = useCallback(async (cat: AgentCategory) => {
+    if (analyzing || sending) return
+    const screenshot = chartRef.current?.getScreenshotDataUrl() ?? null
+    if (!screenshot) { setError("Could not capture chart screenshot"); return }
+
+    const prompt = CATEGORY_PROMPT[cat]
+    const sysPrompt = CATEGORY_SYSTEM[cat]
+
+    setThread([{ role: "user", content: prompt }])
+    setAnalyzing(true)
+    setError(null)
+
+    const imageContent = { type: "image_url", image_url: { url: screenshot } }
+    const textContent = { type: "text", text: prompt }
+    const apiMessages = [
+      { role: "system", content: sysPrompt },
+      { role: "user", content: [imageContent, textContent] },
+    ]
+
+    try {
+      const res = await fetch(withBase("/api/ai/chat"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: apiMessages, model: model || undefined, stream: true }),
+      })
+
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string }
+        setError(typeof j.error === "string" ? j.error : `Request failed (${res.status})`)
+        setThread([])
+        return
+      }
+
+      if (!res.body) { setError("No response body"); setThread([]); return }
+
+      let assistant = ""
+      setThread([{ role: "user", content: prompt }, { role: "assistant", content: "" }])
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+        for (;;) {
+          const nl = buffer.indexOf("\n")
+          if (nl < 0) break
+          const line = buffer.slice(0, nl).trim()
+          buffer = buffer.slice(nl + 1)
+          if (!line.startsWith("data:")) continue
+          const data = line.slice(5).trim()
+          if (data === "[DONE]") continue
+          try {
+            const j = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] }
+            const c = j.choices?.[0]?.delta?.content
+            if (typeof c === "string" && c.length > 0) {
+              assistant += c
+              setThread([{ role: "user", content: prompt }, { role: "assistant", content: assistant }])
+            }
+          } catch { /* ignore */ }
+        }
+        if (done) break
+      }
+
+      if (!assistant) {
+        setThread([{ role: "user", content: prompt }, { role: "assistant", content: "(No response — check model supports vision)" }])
+      }
+    } catch {
+      setError("Network error")
+      setThread([])
+    } finally {
+      setAnalyzing(false)
+      requestAnimationFrame(scrollToBottom)
+    }
+  }, [analyzing, sending, chartRef, model, scrollToBottom])
+
   const handleSubmit = useCallback(() => {
     if (inputIsUrl) void summarize()
     else void send()
@@ -356,8 +442,8 @@ export function AgentPanel({
           <button
             key={k}
             type="button"
-            disabled={sending}
-            onClick={() => setCategory(k)}
+            disabled={sending || analyzing}
+            onClick={() => { setCategory(k); void analyzeChart(k) }}
             className={cn(
               "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
               category === k
@@ -365,7 +451,7 @@ export function AgentPanel({
                 : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
             )}
           >
-            {CATEGORY_LABELS[k]}
+            {analyzing && category === k ? <Loader2 className="inline h-3 w-3 animate-spin" /> : CATEGORY_LABELS[k]}
           </button>
         ))}
       </div>

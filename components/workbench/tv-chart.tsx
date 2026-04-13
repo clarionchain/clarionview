@@ -28,6 +28,8 @@ function chartLineStyle(s: ActiveSeries): LineStyle {
 export type TVChartHandle = {
   /** Visible bar time range (sortable date strings). */
   getVisibleTimeRange: () => { from: string; to: string } | null
+  /** Returns chart as base64 PNG data URL, or null if unavailable. */
+  getScreenshotDataUrl: () => string | null
 }
 
 interface TVChartProps {
@@ -86,6 +88,16 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart(
           const vr = chart.timeScale().getVisibleRange()
           if (!vr) return null
           return { from: timeToSortableString(vr.from), to: timeToSortableString(vr.to) }
+        } catch {
+          return null
+        }
+      },
+      getScreenshotDataUrl() {
+        const chart = chartRef.current
+        if (!chart) return null
+        try {
+          const canvas = chart.takeScreenshot()
+          return canvas.toDataURL("image/png")
         } catch {
           return null
         }
