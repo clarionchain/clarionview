@@ -5,22 +5,17 @@ const IV_LEN = 12
 const TAG_LEN = 16
 const DEV_SALT = "workbench-byok-v1"
 
-let devFallbackWarned = false
+let fallbackWarned = false
 
 function getEncryptionKeyBytes(): Buffer {
   const hex = process.env.WORKBENCH_BYOK_ENCRYPTION_KEY?.trim()
   if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) {
     return Buffer.from(hex, "hex")
   }
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(
-      "WORKBENCH_BYOK_ENCRYPTION_KEY must be set to 64 hex characters (32 bytes) before storing BYOK keys in production."
-    )
-  }
-  if (!devFallbackWarned) {
-    devFallbackWarned = true
+  if (!fallbackWarned) {
+    fallbackWarned = true
     console.warn(
-      "[workbench] WORKBENCH_BYOK_ENCRYPTION_KEY unset; deriving BYOK encryption key from WORKBENCH_SESSION_SECRET (development only)."
+      "[workbench] WORKBENCH_BYOK_ENCRYPTION_KEY unset; deriving BYOK encryption key from WORKBENCH_SESSION_SECRET. Set WORKBENCH_BYOK_ENCRYPTION_KEY to a 64-hex-char value for dedicated key security."
     )
   }
   const secret = process.env.WORKBENCH_SESSION_SECRET || "dev-insecure-workbench-secret-min-32-chars!!"

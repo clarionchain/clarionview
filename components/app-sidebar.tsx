@@ -15,6 +15,7 @@ import {
   LogOut,
   Settings,
   LayoutGrid,
+  Network,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
@@ -111,7 +112,7 @@ export function AppSidebar({ className }: { className?: string }) {
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5 overflow-hidden">
-              <span className="truncate text-sm font-semibold">ClarionChain</span>
+              <span className="truncate text-sm font-semibold">ClarionView</span>
             </div>
           )}
         </div>
@@ -155,14 +156,21 @@ export function AppSidebar({ className }: { className?: string }) {
             </Tooltip>
           ) : (
             <div>
-              <button
-                onClick={() => setWorkbenchOpen((v) => !v)}
-                className="flex items-center gap-2.5 w-full rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent/30 transition-colors"
-              >
-                <FlaskConical className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="flex-1 text-left">Workbench</span>
-                {workbenchOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/40" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/40" />}
-              </button>
+              <div className="flex items-center rounded-md hover:bg-accent/30 transition-colors">
+                <button
+                  onClick={() => router.push(withBase("/"))}
+                  className="flex items-center gap-2.5 flex-1 px-3 py-2 text-sm font-medium text-foreground"
+                >
+                  <FlaskConical className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="flex-1 text-left">Workbench</span>
+                </button>
+                <button
+                  onClick={() => setWorkbenchOpen((v) => !v)}
+                  className="px-2 py-2 text-muted-foreground/40 hover:text-muted-foreground"
+                >
+                  {workbenchOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+              </div>
 
               {workbenchOpen && (
                 <div className="mt-0.5 space-y-0.5 pl-9">
@@ -335,6 +343,30 @@ export function AppSidebar({ className }: { className?: string }) {
               <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="flex-1 text-left">Reports</span>
               <span className="text-[10px] text-muted-foreground/40">Overnight</span>
+            </button>
+          )}
+
+          {/* ── Intel ── */}
+          {collapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => { window.location.href = "/intel/" }}
+                  className="flex items-center justify-center w-full rounded-md px-2 py-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  <Network className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>Intel</TooltipContent>
+            </Tooltip>
+          ) : (
+            <button
+              onClick={() => { window.location.href = "/intel/" }}
+              className="flex items-center gap-2.5 w-full rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent/30 transition-colors"
+            >
+              <Network className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="flex-1 text-left">Intel</span>
+              <span className="text-[10px] text-muted-foreground/40">Daily</span>
             </button>
           )}
 

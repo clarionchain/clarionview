@@ -1,4 +1,16 @@
 clarionview.io {
+    # Strip stale /workbench prefix from old bookmarks
+    @workbench path_regexp workbench ^/workbench(?:/(.*))?$
+    redir @workbench /{re.workbench.1} 301
+
+    # Bitcoin Intelligence knowledge graph (Quartz)
+    handle_path /intel/* {
+        reverse_proxy quartz:8080
+    }
+    # Redirect bare /intel to /intel/
+    @intel_bare path /intel
+    redir @intel_bare /intel/ 301
+
     reverse_proxy nextjs:3002
 }
 

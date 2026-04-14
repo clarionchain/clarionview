@@ -9,12 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+# Copy all Python source modules
+COPY *.py ./
 
-RUN mkdir -p /app/data/reports
+RUN mkdir -p /app/data/reports /app/data/insights
 
 ENV PORT=8000
 ENV REPORTS_DIR=/app/data/reports
+ENV INSIGHTS_DIR=/app/data/insights
 
 EXPOSE 8000
 

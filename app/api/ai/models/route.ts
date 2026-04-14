@@ -134,12 +134,37 @@ export async function GET() {
     const headers: Record<string, string> = {}
     if (s.localOpenAiApiKeyEncrypted) {
       const k = decryptByok(s.localOpenAiApiKeyEncrypted)
-      if (k) headers.Authorization = `Bearer ${k}`
+      if (!k) {
+        return NextResponse.json({
+          models: [] as ListedModel[],
+          cached: false,
+          listSource: "local",
+          chatReady: false,
+          chatHint: "Stored API key could not be decrypted. Open Preferences → AI & models, remove the old key, and save a new one.",
+          chatCode: "LOCAL_KEY_DECRYPT",
+          provider: "local",
+        })
+      }
+      headers.Authorization = `Bearer ${k}`
     }
 
     const upstream = await fetch(`${norm.base}/models`, { headers }).catch(() => null)
     if (!upstream || !upstream.ok) {
-      // Model listing failed but chat may still work — return chatReady: true with empty list
+      // 401 = server requires auth but none was provided or key is wrong
+      if (upstream?.status === 401) {
+        return NextResponse.json({
+          models: [] as ListedModel[],
+          cached: false,
+          listSource: "local",
+          chatReady: false,
+          chatHint: s.localOpenAiApiKeyEncrypted
+            ? "Server rejected the stored API key. Update it in Preferences → AI & models."
+            : "Local server requires an API key. Add one in Preferences → AI & models.",
+          chatCode: "LOCAL_AUTH",
+          provider: "local",
+        })
+      }
+      // Other failure — chat may still work
       return NextResponse.json({
         models: [] as ListedModel[],
         cached: false,

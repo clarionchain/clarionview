@@ -14,6 +14,7 @@ import {
   ChevronUp,
   LogOut,
   Settings,
+  Network,
 } from "lucide-react"
 import { AppSidebar } from "@/components/app-sidebar"
 import { SiteHeader } from "@/components/site-header"
@@ -73,7 +74,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={withBase("/clarionchain_logo.png")} alt="" className="h-7 w-7 object-contain" width={28} height={28} />
             </div>
-            <span className="text-sm font-semibold">ClarionChain</span>
+            <span className="text-sm font-semibold">ClarionView</span>
           </div>
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">
             <X className="h-5 w-5" />
@@ -83,14 +84,21 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1 overflow-y-auto px-2 py-4 space-y-1">
           {/* Workbench */}
           <div>
-            <button
-              onClick={() => setWorkbenchOpen((v) => !v)}
-              className="flex items-center gap-2.5 w-full rounded-md px-3 py-2.5 text-sm font-medium text-foreground hover:bg-accent/30 transition-colors min-h-[44px]"
-            >
-              <FlaskConical className="h-5 w-5 shrink-0 text-muted-foreground" />
-              <span className="flex-1 text-left">Workbench</span>
-              {workbenchOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground/40" /> : <ChevronDown className="h-4 w-4 text-muted-foreground/40" />}
-            </button>
+            <div className="flex items-center rounded-md hover:bg-accent/30 transition-colors">
+              <button
+                onClick={() => { router.push(withBase("/")); setMobileMenuOpen(false) }}
+                className="flex items-center gap-2.5 flex-1 px-3 py-2.5 text-sm font-medium text-foreground min-h-[44px]"
+              >
+                <FlaskConical className="h-5 w-5 shrink-0 text-muted-foreground" />
+                <span className="flex-1 text-left">Workbench</span>
+              </button>
+              <button
+                onClick={() => setWorkbenchOpen((v) => !v)}
+                className="px-3 py-2.5 text-muted-foreground/40 hover:text-muted-foreground min-h-[44px]"
+              >
+                {workbenchOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </button>
+            </div>
 
             {workbenchOpen && (
               <div className="mt-0.5 space-y-0.5 pl-11">
@@ -191,6 +199,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
             <span className="flex-1 text-left">Reports</span>
             <span className="text-xs text-muted-foreground/40">Overnight</span>
+          </button>
+
+          {/* Intel */}
+          <button
+            onClick={() => { setMobileMenuOpen(false); window.location.href = "/intel/" }}
+            className="flex items-center gap-2.5 w-full rounded-md px-3 py-2.5 text-sm font-medium text-foreground hover:bg-accent/30 transition-colors min-h-[44px]"
+          >
+            <Network className="h-5 w-5 shrink-0 text-muted-foreground" />
+            <span className="flex-1 text-left">Intel</span>
+            <span className="text-xs text-muted-foreground/40">Daily</span>
           </button>
         </div>
 

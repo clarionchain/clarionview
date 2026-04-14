@@ -35,10 +35,17 @@ services:
       FRED_API_KEY: ${FRED_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_DEFAULT_MODEL: ${OPENROUTER_DEFAULT_MODEL:-openai/gpt-4o-mini}
+      LOCAL_LLM_URL: ${LOCAL_LLM_URL:-}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-gemma3:4b}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-ollama}
       REPORTS_DIR: /app/data/reports
+      INSIGHTS_DIR: /app/data/insights
+      INTEL_DIR: /app/data/intel
       REPORT_HOUR_UTC: ${REPORT_HOUR_UTC:-2}
+      INTEL_HOUR_UTC: ${INTEL_HOUR_UTC:-3}
     volumes:
       - app_data:/app/data
+      - intel_vault:/app/data/intel
     networks:
       - clarionview
     healthcheck:
@@ -47,6 +54,18 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+
+  quartz:
+    build:
+      context: ./quartz
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - intel_vault:/quartz/content
+    networks:
+      - clarionview
+    depends_on:
+      - analytics
 
   caddy:
     image: caddy:2-alpine
@@ -63,9 +82,11 @@ services:
       - clarionview
     depends_on:
       - nextjs
+      - quartz
 
 volumes:
   app_data:
+  intel_vault:
   caddy_data:
   caddy_config:
 
