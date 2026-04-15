@@ -479,6 +479,17 @@ def run_neural_network(prices: pd.Series) -> dict:
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 
+def _clean(obj):
+    """Recursively replace nan/inf with None for JSON safety."""
+    if isinstance(obj, dict):
+        return {k: _clean(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean(v) for v in obj]
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
+
+
 async def run_all() -> dict:
     """Run all 7 models and return combined result (cached 4 h)."""
     global _cache, _cache_time
@@ -488,6 +499,7 @@ async def run_all() -> dict:
 
     log.info("Quant: fetching BTC price data…")
     prices = await _get_btc_prices()
+    prices = prices[np.isfinite(prices.values)]  # drop any inf/nan rows
     log.info("Quant: %d price points, running 7 models…", len(prices))
 
     result: dict = {
@@ -509,7 +521,7 @@ async def run_all() -> dict:
 
     for name, fn in MODELS:
         try:
-            result[name] = fn()
+            result[name] = _clean(fn())
             log.info("Quant ✓ %s", name)
         except Exception as exc:
             log.error("Quant ✗ %s: %s", name, exc)
