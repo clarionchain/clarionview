@@ -146,12 +146,13 @@ def run_garch(prices: pd.Series) -> dict:
         h_f = omega + (alpha + beta) * h_f
         fcast_30.append(math.sqrt(max(h_f, 1e-12)) * math.sqrt(252))
 
-    dates = prices.index[1:]
+    T = len(r)
+    dates = prices.index[-T:]  # align with r length (dropna may shorten r)
     tail = 365
-    start = max(0, len(dates) - tail)
+    start = max(0, T - tail)
     vol_series = [
         {"time": dates[i].strftime("%Y-%m-%d"), "value": round(float(ann_vol[i]), 4)}
-        for i in range(start, len(dates))
+        for i in range(start, T)
     ]
 
     cur_vol = float(ann_vol[-1])
