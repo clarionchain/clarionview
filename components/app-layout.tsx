@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import {
   FlaskConical,
@@ -18,7 +18,10 @@ import {
   Sigma,
   BarChart2,
   Sparkles,
+  Zap,
+  LogIn,
 } from "lucide-react"
+import { AiConfigModal, loadGuestConfig, loadCreditToken } from "@/components/ai-config-modal"
 import { AppSidebar } from "@/components/app-sidebar"
 import { SiteHeader } from "@/components/site-header"
 import { Button } from "@/components/ui/button"
@@ -38,13 +41,23 @@ const DASHBOARDS = [
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [insightsOpen, setInsightsOpen] = useState(true)
-  const [workbenchOpen, setWorkbenchOpen] = useState(false)
-  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [insightsOpen,   setInsightsOpen]   = useState(true)
+  const [workbenchOpen,  setWorkbenchOpen]  = useState(false)
+  const [templatesOpen,  setTemplatesOpen]  = useState(false)
   const [dashboardsOpen, setDashboardsOpen] = useState(true)
+  const [isLoggedIn,     setIsLoggedIn]     = useState<boolean | null>(null)
+  const [showAiModal,    setShowAiModal]    = useState(false)
+  const [aiConfigured,   setAiConfigured]   = useState(false)
   const store = useWorkbenchStore()
   const { openSettings } = useWorkbenchSettings()
   const router = useRouter()
+
+  useEffect(() => {
+    fetch("/api/ai/settings", { credentials: "include" })
+      .then((r) => { setIsLoggedIn(r.ok) })
+      .catch(() => { setIsLoggedIn(false) })
+    setAiConfigured(Boolean(loadGuestConfig()?.apiKey) || Boolean(loadCreditToken()))
+  }, [])
 
   const close = () => setMobileMenuOpen(false)
 
@@ -247,26 +260,52 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="shrink-0 border-t border-border px-2 py-2 space-y-0.5">
-          <button
-            type="button"
-            onClick={() => { close(); openSettings("account") }}
-            className="flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground/80 transition-colors hover:bg-accent/30 hover:text-foreground"
-          >
-            <Settings className="h-5 w-5 shrink-0" />
-            <span className="flex-1 text-left">Settings</span>
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              await fetch(withBase("/api/auth/logout"), { method: "POST", credentials: "include" })
-              window.location.href = withBase("/login")
-            }}
-            className="flex items-center gap-2.5 w-full rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground/80 hover:bg-accent/30 hover:text-foreground transition-colors min-h-[44px]"
-          >
-            <LogOut className="h-5 w-5 shrink-0" />
-            Sign out
-          </button>
+          {isLoggedIn ? (
+            <>
+              <button type="button"
+                onClick={() => { close(); openSettings("account") }}
+                className="flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground/80 transition-colors hover:bg-accent/30 hover:text-foreground"
+              >
+                <Settings className="h-5 w-5 shrink-0" />
+                <span className="flex-1 text-left">Settings</span>
+              </button>
+              <button type="button"
+                onClick={async () => {
+                  await fetch(withBase("/api/auth/logout"), { method: "POST", credentials: "include" })
+                  window.location.href = withBase("/login")
+                }}
+                className="flex items-center gap-2.5 w-full rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground/80 hover:bg-accent/30 hover:text-foreground transition-colors min-h-[44px]"
+              >
+                <LogOut className="h-5 w-5 shrink-0" />
+                Sign out
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button"
+                onClick={() => { close(); setShowAiModal(true) }}
+                className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-medium transition-colors hover:bg-accent/30 ${aiConfigured ? "text-cyan-400/80 hover:text-cyan-300" : "text-muted-foreground/80 hover:text-foreground"}`}
+              >
+                <Zap className="h-5 w-5 shrink-0" />
+                <span className="flex-1 text-left">{aiConfigured ? "AI configured" : "Configure AI"}</span>
+              </button>
+              <button type="button"
+                onClick={() => { close(); router.push(withBase("/login")) }}
+                className="flex items-center gap-2.5 w-full rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground/60 hover:bg-accent/30 hover:text-foreground transition-colors min-h-[44px]"
+              >
+                <LogIn className="h-5 w-5 shrink-0" />
+                Sign in
+              </button>
+            </>
+          )}
         </div>
+
+        {showAiModal && (
+          <AiConfigModal
+            onClose={() => setShowAiModal(false)}
+            onConfigured={() => { setAiConfigured(true); setShowAiModal(false) }}
+          />
+        )}
 
         <div className="shrink-0 border-t border-border p-3">
           <span className="text-xs text-muted-foreground/50">

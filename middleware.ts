@@ -13,13 +13,16 @@ function logicalPath(pathname: string): string {
   return pathname
 }
 
-function isPublicLogicalPath(path: string): boolean {
-  if (path === "/login") return true
-  if (path === "/api/health") return true
-  if (path.startsWith("/api/auth/")) return true
-  if (path.startsWith("/_next/")) return true
-  if (path === "/favicon.ico") return true
-  if (/\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i.test(path)) return true
+/**
+ * Routes that require an authenticated session.
+ * Everything else is publicly accessible — no login required.
+ */
+function requiresAuth(path: string): boolean {
+  if (path.startsWith("/account"))        return true
+  if (path.startsWith("/admin"))          return true
+  if (path.startsWith("/api/account/"))   return true
+  if (path.startsWith("/api/admin/"))     return true
+  if (path.startsWith("/api/workbooks/")) return true
   return false
 }
 
@@ -32,7 +35,7 @@ function redirectToLogin(request: NextRequest): NextResponse {
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
-  // Strip stale /workbench prefix when BASE is empty (old bookmarks / prod vs dev mismatch)
+  // Strip stale /workbench prefix (old bookmarks)
   if (!BASE && pathname.startsWith("/workbench")) {
     const stripped = pathname.slice("/workbench".length) || "/"
     const url = request.nextUrl.clone()
@@ -42,63 +45,69 @@ export async function middleware(request: NextRequest) {
 
   const path = logicalPath(pathname)
 
-  if (isPublicLogicalPath(path)) {
-    if (path === "/login") {
+  // If user visits login page while already authenticated → redirect home
+  if (path === "/login") {
+    const token = request.cookies.get(SESSION_COOKIE)?.value
+    if (token) {
+      try {
+        await jwtVerify(token, getSessionSecretBytes())
+        const url = request.nextUrl.clone()
+        url.pathname = BASE ? `${BASE}/` : "/"
+        return NextResponse.redirect(url)
+      } catch { /* invalid — show login */ }
+    }
+    return NextResponse.next()
+  }
+
+  // Static assets and auth endpoints always pass through
+  if (path === "/api/health")           return NextResponse.next()
+  if (path.startsWith("/api/auth/"))    return NextResponse.next()
+  if (path.startsWith("/_next/"))       return NextResponse.next()
+  if (path === "/favicon.ico")          return NextResponse.next()
+  if (/\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i.test(path)) return NextResponse.next()
+
+  // Routes that require authentication
+  if (requiresAuth(path)) {
+    const token = request.cookies.get(SESSION_COOKIE)?.value
+    if (!token) {
+      if (path.startsWith("/api/")) {
+        return NextResponse.json({ error: "Unauthorized", code: "WORKBENCH_SESSION" }, { status: 401 })
+      }
+      return redirectToLogin(request)
+    }
+    try {
+      await jwtVerify(token, getSessionSecretBytes())
+    } catch {
+      if (path.startsWith("/api/")) {
+        return NextResponse.json({ error: "Unauthorized", code: "WORKBENCH_SESSION" }, { status: 401 })
+      }
+      return redirectToLogin(request)
+    }
+    const res = NextResponse.next()
+    if (!path.startsWith("/api/")) {
+      res.headers.set("Cache-Control", "private, no-store, must-revalidate")
+    }
+    return res
+  }
+
+  // All other routes are public
+  // Auto-redirect authenticated mobile users from "/" to "/m"
+  if (path === "/") {
+    const ua = request.headers.get("user-agent") ?? ""
+    if (/iPhone|Android|iPad|Mobile/i.test(ua)) {
       const token = request.cookies.get(SESSION_COOKIE)?.value
       if (token) {
         try {
           await jwtVerify(token, getSessionSecretBytes())
           const url = request.nextUrl.clone()
-          url.pathname = BASE ? `${BASE}/` : "/"
+          url.pathname = BASE ? `${BASE}/m` : "/m"
           return NextResponse.redirect(url)
-        } catch {
-          /* invalid — show login */
-        }
+        } catch { /* not authenticated — serve desktop workbench */ }
       }
     }
-    return NextResponse.next()
   }
 
-  const secret = getSessionSecretBytes()
-  const token = request.cookies.get(SESSION_COOKIE)?.value
-  if (!token) {
-    if (path.startsWith("/api/")) {
-      return NextResponse.json(
-        { error: "Unauthorized", code: "WORKBENCH_SESSION" },
-        { status: 401 }
-      )
-    }
-    return redirectToLogin(request)
-  }
-
-  try {
-    await jwtVerify(token, secret)
-
-    // Auto-redirect mobile browsers hitting "/" to "/m"
-    if (path === "/" && !path.startsWith("/api/")) {
-      const ua = request.headers.get("user-agent") ?? ""
-      if (/iPhone|Android|iPad|Mobile/i.test(ua)) {
-        const url = request.nextUrl.clone()
-        url.pathname = BASE ? `${BASE}/m` : "/m"
-        return NextResponse.redirect(url)
-      }
-    }
-
-    const res = NextResponse.next()
-    // Avoid stale cached HTML: shell can load without a fresh auth check while API calls get 401.
-    if (!path.startsWith("/api/")) {
-      res.headers.set("Cache-Control", "private, no-store, must-revalidate")
-    }
-    return res
-  } catch {
-    if (path.startsWith("/api/")) {
-      return NextResponse.json(
-        { error: "Unauthorized", code: "WORKBENCH_SESSION" },
-        { status: 401 }
-      )
-    }
-    return redirectToLogin(request)
-  }
+  return NextResponse.next()
 }
 
 export const config = {

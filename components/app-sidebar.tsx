@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import {
   FlaskConical,
@@ -19,7 +19,10 @@ import {
   Sigma,
   BarChart2,
   Sparkles,
+  Zap,
+  LogIn,
 } from "lucide-react"
+import { AiConfigModal, loadGuestConfig, loadCreditToken } from "@/components/ai-config-modal"
 import { cn } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
 import { Button } from "@/components/ui/button"
@@ -49,17 +52,31 @@ const INSIGHTS_ITEMS = [
 ]
 
 export function AppSidebar({ className }: { className?: string }) {
-  const [collapsed, setCollapsed] = useState(false)
-  const [insightsOpen, setInsightsOpen] = useState(true)
-  const [workbenchOpen, setWorkbenchOpen] = useState(false)
-  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [collapsed,      setCollapsed]      = useState(false)
+  const [insightsOpen,   setInsightsOpen]   = useState(true)
+  const [workbenchOpen,  setWorkbenchOpen]  = useState(false)
+  const [templatesOpen,  setTemplatesOpen]  = useState(false)
   const [dashboardsOpen, setDashboardsOpen] = useState(true)
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const [dropIndex, setDropIndex] = useState<number | null>(null)
+  const [dragIndex,      setDragIndex]      = useState<number | null>(null)
+  const [dropIndex,      setDropIndex]      = useState<number | null>(null)
+  const [isLoggedIn,     setIsLoggedIn]     = useState<boolean | null>(null)
+  const [showAiModal,    setShowAiModal]    = useState(false)
+  const [aiConfigured,   setAiConfigured]   = useState(false)
   const store = useWorkbenchStore()
   const { openSettings } = useWorkbenchSettings()
   const pathname = usePathname()
   const router = useRouter()
+
+  // Detect auth state and guest AI config on mount
+  useEffect(() => {
+    fetch("/api/ai/settings", { credentials: "include" })
+      .then((r) => { setIsLoggedIn(r.ok) })
+      .catch(() => { setIsLoggedIn(false) })
+
+    const hasByok   = Boolean(loadGuestConfig()?.apiKey)
+    const hasCredit = Boolean(loadCreditToken())
+    setAiConfigured(hasByok || hasCredit)
+  }, [])
 
   const handleDragStart = (index: number) => (e: React.DragEvent) => {
     setDragIndex(index)
@@ -368,51 +385,92 @@ export function AppSidebar({ className }: { className?: string }) {
         <Separator />
 
         <div className={cn("shrink-0 space-y-0.5 px-2 pb-1", collapsed && "px-1")}>
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => { setCollapsed(false); openSettings("account") }}
-                  className="flex w-full items-center justify-center rounded-md px-2 py-2 text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                  aria-label="Settings"
+          {isLoggedIn ? (
+            <>
+              {/* Authenticated: Settings + Sign out */}
+              {collapsed ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button type="button"
+                      onClick={() => { setCollapsed(false); openSettings("account") }}
+                      className="flex w-full items-center justify-center rounded-md px-2 py-2 text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <Settings className="h-4 w-4 shrink-0" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" sideOffset={8}>Settings</TooltipContent>
+                </Tooltip>
+              ) : (
+                <button type="button"
+                  onClick={() => openSettings("account")}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground/60 transition-colors hover:bg-accent/30 hover:text-foreground"
                 >
                   <Settings className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 text-left text-xs">Settings</span>
                 </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>Settings</TooltipContent>
-            </Tooltip>
+              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm"
+                    className={cn("w-full justify-start gap-2 text-muted-foreground/60 hover:text-foreground", collapsed && "justify-center px-0")}
+                    onClick={async () => {
+                      await fetch(withBase("/api/auth/logout"), { method: "POST", credentials: "include" })
+                      window.location.href = withBase("/login")
+                    }}
+                  >
+                    <LogOut className="h-4 w-4 shrink-0" />
+                    {!collapsed && <span className="text-xs">Sign out</span>}
+                  </Button>
+                </TooltipTrigger>
+                {collapsed && <TooltipContent side="right">Sign out</TooltipContent>}
+              </Tooltip>
+            </>
           ) : (
-            <button
-              type="button"
-              onClick={() => openSettings("account")}
-              className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground/60 transition-colors hover:bg-accent/30 hover:text-foreground"
-            >
-              <Settings className="h-4 w-4 shrink-0" />
-              <span className="flex-1 text-left text-xs">Settings</span>
-            </button>
+            <>
+              {/* Guest: AI config + Sign in */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button"
+                    onClick={() => setShowAiModal(true)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs transition-colors",
+                      aiConfigured
+                        ? "text-cyan-400/80 hover:text-cyan-300 hover:bg-accent/30"
+                        : "text-muted-foreground/60 hover:text-foreground hover:bg-accent/30",
+                      collapsed && "justify-center px-2"
+                    )}
+                  >
+                    <Zap className="h-4 w-4 shrink-0" />
+                    {!collapsed && <span className="flex-1 text-left">{aiConfigured ? "AI configured" : "Configure AI"}</span>}
+                  </button>
+                </TooltipTrigger>
+                {collapsed && <TooltipContent side="right" sideOffset={8}>Configure AI</TooltipContent>}
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button"
+                    onClick={() => router.push(withBase("/login"))}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-muted-foreground/50 hover:text-foreground hover:bg-accent/30 transition-colors",
+                      collapsed && "justify-center px-2"
+                    )}
+                  >
+                    <LogIn className="h-4 w-4 shrink-0" />
+                    {!collapsed && <span className="flex-1 text-left">Sign in</span>}
+                  </button>
+                </TooltipTrigger>
+                {collapsed && <TooltipContent side="right" sideOffset={8}>Sign in</TooltipContent>}
+              </Tooltip>
+            </>
           )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "w-full justify-start gap-2 text-muted-foreground/60 hover:text-foreground",
-                  collapsed && "justify-center px-0"
-                )}
-                onClick={async () => {
-                  await fetch(withBase("/api/auth/logout"), { method: "POST", credentials: "include" })
-                  window.location.href = withBase("/login")
-                }}
-              >
-                <LogOut className="h-4 w-4 shrink-0" />
-                {!collapsed && <span className="text-xs">Sign out</span>}
-              </Button>
-            </TooltipTrigger>
-            {collapsed && <TooltipContent side="right">Sign out</TooltipContent>}
-          </Tooltip>
         </div>
+
+        {showAiModal && (
+          <AiConfigModal
+            onClose={() => setShowAiModal(false)}
+            onConfigured={() => { setAiConfigured(true); setShowAiModal(false) }}
+          />
+        )}
 
         <div className={cn("shrink-0 p-2", !collapsed && "p-3")}>
           <div className={cn("flex items-center rounded-md text-xs text-muted-foreground/50", collapsed ? "justify-center p-1" : "gap-2 px-3 py-2")}>

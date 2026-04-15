@@ -66,6 +66,30 @@ export function getDb(): Database.Database {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
+
+    -- Anonymous payment credits (no user account required)
+    CREATE TABLE IF NOT EXISTS anon_credits (
+      token_id TEXT PRIMARY KEY,
+      credits_total INTEGER NOT NULL,
+      credits_used INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      payment_method TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Cashu proof tracking (prevent double-spend)
+    CREATE TABLE IF NOT EXISTS spent_cashu_proofs (
+      proof_secret TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Cashu proofs received by the server (for future melt/use)
+    CREATE TABLE IF NOT EXISTS cashu_proofs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      proof_json TEXT NOT NULL,
+      mint_url TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
   migrateUsersIsAdmin(db)
   migrateUserAiColumns(db)
