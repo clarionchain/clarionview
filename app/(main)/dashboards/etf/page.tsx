@@ -19,10 +19,11 @@ export default function EtfDashboardPage() {
   return (
     <DashboardPage
       title="Bitcoin ETF Dashboard"
-      description="Spot Bitcoin ETF performance comparison. ETFs normalized to 100 at inception (right axis) · BTC price for reference (left axis)."
+      description="How much has each spot Bitcoin ETF returned since the Jan 11, 2024 launch date? Right axis shows % return; BTC price shown for context."
       tickers={ETF_TICKERS}
       templateId="tpl_etf"
       excludeAxisFromStats="left"
+      clipFromDate="2024-01-11"
     />
   )
 }

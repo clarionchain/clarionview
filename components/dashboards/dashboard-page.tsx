@@ -37,6 +37,12 @@ export interface DashboardPageProps {
   templateId: string
   /** Exclude tickers with this axis value from the stats table */
   excludeAxisFromStats?: "left" | "right"
+  /**
+   * ISO date (YYYY-MM-DD) to clip all right-axis series from.
+   * When set, right-axis series show % return since this date (0% = start).
+   * Useful when series have very different inception dates (e.g. GBTC 2015 vs IBIT 2024).
+   */
+  clipFromDate?: string
 }
 
 function pctChange(data: SeriesDataPoint[], days: number): number | null {
@@ -58,7 +64,11 @@ function PctBadge({ value }: { value: number | null }) {
   )
 }
 
-export function DashboardPage({ title, description, tickers, templateId, excludeAxisFromStats }: DashboardPageProps) {
+function fmtPct(v: number) {
+  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`
+}
+
+export function DashboardPage({ title, description, tickers, templateId, excludeAxisFromStats, clipFromDate }: DashboardPageProps) {
   const [states, setStates] = useState<Record<string, TickerState>>(
     Object.fromEntries(tickers.map((t) => [t.seriesName, { data: [], loading: true, error: null }]))
   )
@@ -106,7 +116,6 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
       }
 
       const container = chartContainerRef.current!
-
       const hasLeftAxis = tickers.some((t) => t.axis === "left")
 
       if (!chartRef.current) {
@@ -114,10 +123,7 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
           layout: { background: { color: "transparent" }, textColor: "#9ca3af" },
           grid: { vertLines: { color: "#1f2937" }, horzLines: { color: "#1f2937" } },
           rightPriceScale: { borderColor: "#374151" },
-          leftPriceScale: {
-            visible: hasLeftAxis,
-            borderColor: "#374151",
-          },
+          leftPriceScale: { visible: hasLeftAxis, borderColor: "#374151" },
           timeScale: { borderColor: "#374151", timeVisible: false },
           width: container.clientWidth,
           height: 320,
@@ -128,10 +134,7 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
 
       const chart = chartRef.current
 
-      const allData = tickers
-        .map((t) => states[t.seriesName]?.data ?? [])
-        .filter((d) => d.length > 0)
-
+      const allData = tickers.map((t) => states[t.seriesName]?.data ?? []).filter((d) => d.length > 0)
       if (allData.length === 0) return
 
       for (const ticker of tickers) {
@@ -140,14 +143,21 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
 
         const isLeft = ticker.axis === "left"
 
-        // Left-axis series: raw price. Right-axis series: normalized to 100 at inception.
         let displayData: { time: `${number}-${number}-${number}`; value: number }[]
+
         if (isLeft) {
+          // Left axis: raw price values
           displayData = raw.map((d) => ({ time: d.time as `${number}-${number}-${number}`, value: d.value }))
         } else {
-          const base = raw[0].value
+          // Right axis: % return from clipFromDate (or series start if no clip)
+          const source = clipFromDate ? raw.filter((d) => d.time >= clipFromDate) : raw
+          if (source.length === 0) continue
+          const base = source[0].value
           if (base === 0) continue
-          displayData = raw.map((d) => ({ time: d.time as `${number}-${number}-${number}`, value: (d.value / base) * 100 }))
+          displayData = source.map((d) => ({
+            time: d.time as `${number}-${number}-${number}`,
+            value: ((d.value / base) - 1) * 100,
+          }))
         }
 
         let lineSeries = seriesRefs.current.get(ticker.seriesName)
@@ -159,6 +169,13 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
             priceLineVisible: false,
             lastValueVisible: !isLeft,
             priceScaleId: isLeft ? "left" : "right",
+            ...(!isLeft && {
+              priceFormat: {
+                type: "custom" as const,
+                formatter: fmtPct,
+                minMove: 0.1,
+              },
+            }),
           })
           seriesRefs.current.set(ticker.seriesName, lineSeries)
         }
@@ -169,7 +186,7 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
     }
 
     init().catch(console.error)
-  }, [states, tickers])
+  }, [states, tickers, clipFromDate])
 
   // Resize observer
   useEffect(() => {
@@ -191,14 +208,26 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
   }, [])
 
   const openInWorkbench = useCallback(() => {
-    // Store template preference and navigate to workbench
-    try {
-      sessionStorage.setItem("load_template", templateId)
-    } catch { /* ignore */ }
+    try { sessionStorage.setItem("load_template", templateId) } catch { /* ignore */ }
     window.location.href = withBase("/")
   }, [templateId])
 
   const anyLoading = tickers.some((t) => states[t.seriesName]?.loading)
+  const hasLeftAxis = tickers.some((t) => t.axis === "left")
+
+  // Build chart subtitle
+  let chartSubtitle: string
+  if (hasLeftAxis) {
+    if (clipFromDate) {
+      chartSubtitle = `% return since ${clipFromDate} (right axis) · BTC price USD (left axis)`
+    } else {
+      chartSubtitle = "% return from series start (right axis) · BTC price USD (left axis)"
+    }
+  } else {
+    chartSubtitle = clipFromDate
+      ? `% return since ${clipFromDate}`
+      : "% return from series start"
+  }
 
   return (
     <div className="space-y-6">
@@ -220,11 +249,7 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
       {/* Comparison chart */}
       <div className="rounded-lg border border-border/30 bg-card/40 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-border/20 flex items-center gap-2">
-          <span className="text-xs text-muted-foreground/60 font-medium">
-            {tickers.some((t) => t.axis === "left")
-              ? "ETFs indexed to 100 at inception (right) · BTC price USD (left)"
-              : "Performance (indexed to 100 at series start)"}
-          </span>
+          <span className="text-xs text-muted-foreground/60 font-medium">{chartSubtitle}</span>
           {anyLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/40" />}
         </div>
         <div className="px-2 pt-2">
