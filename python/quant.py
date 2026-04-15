@@ -480,13 +480,18 @@ def run_neural_network(prices: pd.Series) -> dict:
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def _clean(obj):
-    """Recursively replace nan/inf with None for JSON safety."""
+    """Recursively replace nan/inf/numpy types for JSON safety."""
     if isinstance(obj, dict):
         return {k: _clean(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_clean(v) for v in obj]
-    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
-        return None
+    if isinstance(obj, np.ndarray):
+        return _clean(obj.tolist())
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, (float, np.floating)):
+        f = float(obj)
+        return None if (math.isnan(f) or math.isinf(f)) else f
     return obj
 
 
