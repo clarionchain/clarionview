@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   FileText, Loader2, RefreshCw, AlertCircle,
-  ChevronRight, Calendar, Zap, TrendingUp, TrendingDown, Minus, Download,
+  ChevronLeft, ChevronRight, Zap, TrendingUp, TrendingDown, Minus, Download,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import { withBase } from "@/lib/base-path"
@@ -339,7 +339,7 @@ export default function ReportsPage() {
   const [reports, setReports] = useState<ReportMeta[]>([])
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
-  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const [report, setReport] = useState<ReportFull | null>(null)
   const [reportLoading, setReportLoading] = useState(false)
   const [triggering, setTriggering] = useState(false)
@@ -355,15 +355,17 @@ export default function ReportsPage() {
       }
       const data: ReportMeta[] = await r.json()
       setReports(data)
-      if (data.length > 0 && !selectedDate) setSelectedDate(data[0].date)
+      setSelectedIndex(0)
     } catch (e: unknown) {
       setListError(e instanceof Error ? e.message : "Failed to load reports")
     } finally {
       setListLoading(false)
     }
-  }, [selectedDate])
+  }, [])
 
-  useEffect(() => { loadList() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadList() }, [loadList])
+
+  const selectedDate = reports[selectedIndex]?.date ?? null
 
   useEffect(() => {
     if (!selectedDate) return
@@ -400,87 +402,67 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full gap-0 -m-4 lg:-m-6">
-      {/* Toolbar */}
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/30 bg-card/80 px-4 backdrop-blur-md">
-        <FileText className="h-4 w-4 text-muted-foreground/50" />
-        <span className="text-sm font-medium">Overnight Reports</span>
-        <div className="flex-1" />
-        <button onClick={loadList} disabled={listLoading} className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent/30 rounded transition-colors">
-          <RefreshCw className={cn("h-3.5 w-3.5", listLoading && "animate-spin")} />
-        </button>
-        <button onClick={triggerReport} disabled={triggering} className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground/50 hover:text-foreground hover:bg-accent/30 rounded transition-colors border border-border/30">
-          {triggering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-          Generate Now
-        </button>
-      </div>
-
-      <div className="flex flex-1 min-h-0">
-        {/* Sidebar */}
-        <div className="w-48 shrink-0 border-r border-border/30 overflow-y-auto bg-card/20">
-          {listLoading ? (
-            <div className="flex items-center gap-2 px-4 py-6 text-xs text-muted-foreground/50">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading...
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          {reports.length > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setSelectedIndex((i) => Math.min(i + 1, reports.length - 1))}
+                disabled={selectedIndex >= reports.length - 1}
+                className="p-1 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/30 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="text-xs text-muted-foreground/50 tabular-nums w-20 text-center">
+                {selectedDate}
+              </span>
+              <button
+                onClick={() => setSelectedIndex((i) => Math.max(i - 1, 0))}
+                disabled={selectedIndex <= 0}
+                className="p-1 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/30 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
-          ) : listError ? (
-            <div className="px-4 py-6 space-y-2">
-              <div className="flex items-center gap-1.5 text-xs text-rose-400/80">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />Service unavailable
-              </div>
-              <p className="text-[11px] text-muted-foreground/40 leading-relaxed">
-                Ensure the analytics service is running.
-              </p>
-            </div>
-          ) : reports.length === 0 ? (
-            <div className="px-4 py-8 text-center">
-              <FileText className="h-8 w-8 text-muted-foreground/20 mx-auto mb-2" />
-              <p className="text-xs text-muted-foreground/40">No reports yet.</p>
-              <p className="text-[11px] text-muted-foreground/30 mt-1">Click &ldquo;Generate Now&rdquo; to create the first one.</p>
-            </div>
-          ) : (
-            <div className="py-1">
-              {reports.map((r) => (
-                <button
-                  key={r.date}
-                  onClick={() => setSelectedDate(r.date)}
-                  className={cn(
-                    "flex items-center gap-2 w-full px-3 py-2.5 text-left transition-colors",
-                    selectedDate === r.date
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent/30 hover:text-foreground"
-                  )}
-                >
-                  <Calendar className="h-3.5 w-3.5 shrink-0 opacity-50" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium truncate">{r.date}</div>
-                    {r.generated_at && (
-                      <div className="text-[10px] opacity-40 truncate">{formatGenerated(r.generated_at)}</div>
-                    )}
-                  </div>
-                  {r.status === "error" && <AlertCircle className="h-3 w-3 shrink-0 text-rose-400/70" />}
-                  <ChevronRight className="h-3 w-3 shrink-0 opacity-30" />
-                </button>
-              ))}
+          )}
+          {listLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/40" />}
+          {listError && (
+            <div className="flex items-center gap-1.5 text-xs text-rose-400/80">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />Service unavailable
             </div>
           )}
         </div>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0 overflow-y-auto px-5 py-4">
-          {!selectedDate ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground/30 gap-3">
-              <FileText className="h-12 w-12 opacity-30" />
-              <p className="text-sm">Select a report from the list</p>
-            </div>
-          ) : reportLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground/50">
-              <Loader2 className="h-4 w-4 animate-spin" />Loading report...
-            </div>
-          ) : report ? (
-            <ReportInfographic report={report} />
-          ) : null}
+        <div className="flex items-center gap-2">
+          <button onClick={loadList} disabled={listLoading} className="p-1.5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/30 transition-colors">
+            <RefreshCw className={cn("h-3.5 w-3.5", listLoading && "animate-spin")} />
+          </button>
+          <button onClick={triggerReport} disabled={triggering} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground/60 hover:text-foreground hover:bg-accent/30 rounded border border-border/40 transition-colors">
+            {triggering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+            Generate Now
+          </button>
         </div>
       </div>
+
+      {/* Content */}
+      {listLoading && !report ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground/50 py-12 justify-center">
+          <Loader2 className="h-4 w-4 animate-spin" />Loading...
+        </div>
+      ) : reports.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground/30">
+          <FileText className="h-12 w-12 opacity-30" />
+          <p className="text-sm">No reports yet.</p>
+          <p className="text-xs">Click &ldquo;Generate Now&rdquo; to create the first one.</p>
+        </div>
+      ) : reportLoading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground/50 py-12 justify-center">
+          <Loader2 className="h-4 w-4 animate-spin" />Loading report...
+        </div>
+      ) : report ? (
+        <ReportInfographic report={report} />
+      ) : null}
     </div>
   )
 }
