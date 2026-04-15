@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+from data import fetch_bitview_batch
 
 log = logging.getLogger(__name__)
 
@@ -29,12 +29,14 @@ CACHE_TTL = 3600 * 4  # 4 hours
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 
-def _get_btc_prices(days: int = 730) -> pd.Series:
-    ticker = yf.Ticker("BTC-USD")
-    hist = ticker.history(period=f"{days}d", auto_adjust=True)
-    if hist.empty:
-        raise ValueError("No BTC-USD data from yfinance")
-    return hist["Close"].dropna()
+async def _get_btc_prices() -> pd.Series:
+    """Fetch BTC daily price from BitView (same source as mining/strategy dashboards)."""
+    bv = await fetch_bitview_batch(["price"])
+    s = bv.get("price", pd.Series(dtype=float)).dropna()
+    if s.empty:
+        raise ValueError("No BTC price data from BitView")
+    s.index = pd.to_datetime(s.index)
+    return s
 
 
 def _series(prices: pd.Series, tail: int | None = None) -> list[dict]:
@@ -485,7 +487,7 @@ async def run_all() -> dict:
         return _cache
 
     log.info("Quant: fetching BTC price data…")
-    prices = _get_btc_prices(days=730)
+    prices = await _get_btc_prices()
     log.info("Quant: %d price points, running 7 models…", len(prices))
 
     result: dict = {
