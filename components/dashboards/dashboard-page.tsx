@@ -68,6 +68,61 @@ function fmtPct(v: number) {
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`
 }
 
+function ReturnBarChart({ tickers, states, clipFromDate }: {
+  tickers: TickerDef[]
+  states: Record<string, TickerState>
+  clipFromDate?: string
+}) {
+  const entries = tickers
+    .filter((t) => t.axis !== "left")
+    .flatMap((t) => {
+      const raw = states[t.seriesName]?.data ?? []
+      const source = clipFromDate ? raw.filter((d) => d.time >= clipFromDate) : raw
+      if (source.length < 2) return []
+      const base = source[0].value
+      const last = source[source.length - 1].value
+      if (!base) return []
+      return [{ ticker: t, pct: ((last / base) - 1) * 100 }]
+    })
+    .sort((a, b) => b.pct - a.pct)
+
+  if (entries.length === 0) return null
+
+  const maxAbs = Math.max(...entries.map((e) => Math.abs(e.pct)))
+
+  return (
+    <div className="border-l border-border/20 px-4 py-3 flex flex-col w-52 shrink-0">
+      <div className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider mb-2.5">
+        Total Return
+      </div>
+      <div className="flex flex-col gap-2 justify-center flex-1">
+        {entries.map(({ ticker, pct }) => {
+          const symbol = ticker.seriesName.split(":")[1] ?? ticker.seriesName
+          const barW = maxAbs > 0 ? (Math.abs(pct) / maxAbs) * 100 : 0
+          const positive = pct >= 0
+          return (
+            <div key={ticker.seriesName} className="flex items-center gap-2">
+              <div className="text-[10px] font-mono text-muted-foreground/50 w-9 shrink-0 text-right">{symbol}</div>
+              <div className="flex-1 h-3 bg-white/5 rounded-sm overflow-hidden">
+                <div
+                  className="h-full rounded-sm transition-all"
+                  style={{ width: `${barW}%`, backgroundColor: ticker.color }}
+                />
+              </div>
+              <div
+                className="text-[10px] font-mono tabular-nums w-12 shrink-0 text-right"
+                style={{ color: positive ? "#34d399" : "#f87171" }}
+              >
+                {fmtPct(pct)}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function DashboardPage({ title, description, tickers, templateId, excludeAxisFromStats, clipFromDate }: DashboardPageProps) {
   const [states, setStates] = useState<Record<string, TickerState>>(
     Object.fromEntries(tickers.map((t) => [t.seriesName, { data: [], loading: true, error: null }]))
@@ -246,14 +301,19 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
         </button>
       </div>
 
-      {/* Comparison chart */}
+      {/* Comparison chart + return bar chart */}
       <div className="rounded-lg border border-border/30 bg-card/40 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-border/20 flex items-center gap-2">
           <span className="text-xs text-muted-foreground/60 font-medium">{chartSubtitle}</span>
           {anyLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/40" />}
         </div>
-        <div className="px-2 pt-2">
-          <div ref={chartContainerRef} className="w-full" style={{ minHeight: 320 }} />
+        <div className="flex">
+          <div className="flex-1 min-w-0 px-2 pt-2">
+            <div ref={chartContainerRef} className="w-full" style={{ minHeight: 320 }} />
+          </div>
+          {!anyLoading && clipFromDate && (
+            <ReturnBarChart tickers={tickers} states={states} clipFromDate={clipFromDate} />
+          )}
         </div>
         {/* Legend */}
         <div className="flex flex-wrap gap-x-4 gap-y-1.5 px-4 pb-3 pt-1">
