@@ -359,7 +359,7 @@ export function DashboardPage({ title, description, tickers, templateId, exclude
                     {state?.loading ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/40 ml-auto" />
                     ) : state?.error ? (
-                      <span className="flex items-center gap-1 justify-end text-xs text-rose-400/70">
+                      <span className="flex items-center gap-1 justify-end text-xs text-rose-400/70" title={state.error}>
                         <AlertCircle className="h-3 w-3" />
                         Error
                       </span>

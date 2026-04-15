@@ -6,6 +6,7 @@ Returns:
   companies     — all public miners: price, changes, market cap, beta vs BTC
   hash_rate_series / puell_series — time-series for charts
 """
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone, date
@@ -168,54 +169,67 @@ async def fetch_all() -> dict:
     hash_series  = _to_series(hash_s)
     puell_series = _to_series(puell_s)
 
-    # ── Mining companies ──────────────────────────────────────────────────────
-    companies = []
-    for ticker, name in MINING_COMPANIES:
+    # ── Mining companies (concurrent fetches) ────────────────────────────────
+    async def _fetch_one(ticker: str, name: str) -> dict | None:
+        """Fetch a single company's price history in a thread (yfinance is sync)."""
+        loop = asyncio.get_event_loop()
         try:
-            t = yf.Ticker(ticker)
-            hist = t.history(period="1y", auto_adjust=True)
-            if hist.empty:
-                continue
-            price_col = hist["Close"].dropna()
-            if price_col.empty:
-                continue
-
-            cur_price = float(price_col.iloc[-1])
-
-            # Market cap from fast_info (lightweight, no extra API call)
-            mktcap = None
-            try:
-                fi = t.fast_info
-                mc = getattr(fi, "market_cap", None)
-                if mc and mc > 0:
-                    mktcap = int(mc)
-            except Exception:
-                pass
-
-            # Volume (10-day avg)
-            vol_avg = None
-            if "Volume" in hist.columns:
-                vol_series = hist["Volume"].dropna().tail(10)
-                if not vol_series.empty:
-                    vol_avg = int(vol_series.mean())
-
-            beta = _beta_vs_btc(price_col, price_s)
-
-            companies.append({
-                "ticker":      ticker,
-                "name":        name,
-                "price":       round(cur_price, 2),
-                "change_1d":   pct_change(price_col, 1),
-                "change_7d":   pct_change(price_col, 7),
-                "change_30d":  pct_change(price_col, 30),
-                "change_ytd":  _ytd_change(price_col),
-                "market_cap":  mktcap,
-                "vol_10d_avg": vol_avg,
-                "beta_btc":    beta,
-            })
-            log.info("Mining company OK: %s $%.2f", ticker, cur_price)
+            hist = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: yf.Ticker(ticker).history(period="max", auto_adjust=True),
+                ),
+                timeout=20.0,
+            )
+        except asyncio.TimeoutError:
+            log.warning("%s: yfinance timed out", ticker)
+            return None
         except Exception as e:
-            log.warning("Mining company failed %s: %s", ticker, e)
+            log.warning("%s: yfinance error: %s", ticker, e)
+            return None
+
+        if hist is None or hist.empty:
+            log.warning("%s: no price data", ticker)
+            return None
+
+        price_col = hist["Close"].dropna()
+        if price_col.empty:
+            return None
+
+        cur_price = float(price_col.iloc[-1])
+
+        mktcap = None
+        try:
+            fi = yf.Ticker(ticker).fast_info
+            mc = getattr(fi, "market_cap", None)
+            if mc and mc > 0:
+                mktcap = int(mc)
+        except Exception:
+            pass
+
+        vol_avg = None
+        if "Volume" in hist.columns:
+            vol_series = hist["Volume"].dropna().tail(10)
+            if not vol_series.empty:
+                vol_avg = int(vol_series.mean())
+
+        beta = _beta_vs_btc(price_col, price_s)
+        log.info("Mining company OK: %s $%.2f", ticker, cur_price)
+        return {
+            "ticker":      ticker,
+            "name":        name,
+            "price":       round(cur_price, 2),
+            "change_1d":   pct_change(price_col, 1),
+            "change_7d":   pct_change(price_col, 7),
+            "change_30d":  pct_change(price_col, 30),
+            "change_ytd":  _ytd_change(price_col),
+            "market_cap":  mktcap,
+            "vol_10d_avg": vol_avg,
+            "beta_btc":    beta,
+        }
+
+    results = await asyncio.gather(*[_fetch_one(t, n) for t, n in MINING_COMPANIES])
+    companies = [r for r in results if r is not None]
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
