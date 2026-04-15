@@ -8,8 +8,9 @@ import logging
 from datetime import datetime, timezone
 
 import numpy as np
-import yfinance as yf
+import pandas as pd
 import httpx
+from curl_cffi import requests as cffi_requests
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,28 +45,51 @@ def health():
 
 
 # ── Yahoo Finance ─────────────────────────────────────────────────────────────
+# Use curl_cffi with Chrome TLS impersonation — bypasses Yahoo's bot fingerprint detection.
+
+_YF_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+_YF_IMPERSONATE = "chrome124"
+
+
+def _yf_fetch_series(ticker: str) -> list[dict]:
+    """Fetch adjusted-close daily series from Yahoo Finance v8 chart API."""
+    url = _YF_CHART_URL.format(ticker=ticker)
+    r = cffi_requests.get(
+        url,
+        params={"range": "max", "interval": "1d", "includeAdjustedClose": "true"},
+        impersonate=_YF_IMPERSONATE,
+        timeout=20,
+    )
+    if r.status_code != 200:
+        raise HTTPException(status_code=404, detail=f"Yahoo Finance returned {r.status_code} for '{ticker}'")
+    payload = r.json()
+    result = payload.get("chart", {}).get("result")
+    if not result:
+        err = payload.get("chart", {}).get("error", {})
+        raise HTTPException(status_code=404, detail=f"No data for '{ticker}': {err}")
+    timestamps = result[0].get("timestamp", [])
+    adj_list = result[0].get("indicators", {}).get("adjclose", [{}])[0].get("adjclose", [])
+    return [
+        {"time": pd.Timestamp(ts, unit="s").strftime("%Y-%m-%d"), "value": round(float(v), 6)}
+        for ts, v in zip(timestamps, adj_list)
+        if v is not None
+    ]
+
 
 @app.get("/data/yf")
-def get_yf_data(ticker: str, field: str = "Close"):
-    """Daily time-series for a Yahoo Finance ticker."""
+def get_yf_data(ticker: str):
+    """Daily adjusted-close time-series for a Yahoo Finance ticker."""
     if not ticker:
         raise HTTPException(status_code=400, detail="ticker is required")
     try:
-        hist = yf.Ticker(ticker).history(period="max", auto_adjust=True)
-        if hist.empty:
+        data = _yf_fetch_series(ticker)
+        if not data:
             raise HTTPException(status_code=404, detail=f"No data for ticker '{ticker}'")
-        col = field if field in hist.columns else "Close"
-        series = hist[col].dropna()
-        data = [
-            {"time": d.strftime("%Y-%m-%d"), "value": round(float(v), 6)}
-            for d, v in series.items()
-            if np.isfinite(float(v))
-        ]
         return {"data": data, "total": len(data), "ticker": ticker}
     except HTTPException:
         raise
     except Exception as e:
-        log.error("yfinance error for %s: %s", ticker, e)
+        log.error("YF fetch error for %s: %s", ticker, e)
         raise HTTPException(status_code=502, detail=f"Failed to fetch '{ticker}': {e}")
 
 

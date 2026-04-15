@@ -2,21 +2,22 @@
 Bitcoin Mining Intelligence — fundamentals + public company data.
 
 Returns:
-  fundamentals  — hash rate, Puell multiple, hash price, difficulty metrics
-  companies     — all public miners: price, changes, market cap, beta vs BTC
+  fundamentals  — hash rate, Puell multiple, difficulty metrics
+  companies     — all public miners: price, changes, volume, beta vs BTC
   hash_rate_series / puell_series — time-series for charts
+
+Uses curl_cffi with Chrome TLS impersonation to bypass Yahoo Finance bot detection.
 """
 import asyncio
 import json
 import logging
 import time
 from datetime import datetime, timezone, date
-from functools import partial
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+from curl_cffi.requests import AsyncSession as CffiAsyncSession
 
 import config
 from data import fetch_bitview_batch, compute_zscore, compute_percentile, pct_change
@@ -25,12 +26,14 @@ log = logging.getLogger(__name__)
 
 _cache: dict | None = None
 _cache_at: float = 0.0
-CACHE_TTL = 1800  # 30 min — mining data changes slowly
+CACHE_TTL = 1800  # 30 min
 
-# Disk cache for company equity data (survives restarts; falls back if Yahoo blocks us)
+# Disk cache survives container restarts; used as fallback when Yahoo is unreachable
 _COMPANY_DISK_CACHE = Path(str(config.REPORTS_DIR.parent / "mining_companies.json"))
 _COMPANY_DISK_TTL = 3600 * 12  # 12-hour stale tolerance
 
+_YF_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+_YF_IMPERSONATE = "chrome124"
 
 MINING_COMPANIES = [
     ("MARA",  "Marathon Digital Holdings"),
@@ -51,16 +54,14 @@ MINING_BV_SERIES = ["hash_rate", "puell_multiple", "price"]
 
 
 def _ytd_change(series: pd.Series) -> float | None:
-    """% change from Jan 1 of current year to latest value."""
     if series.dropna().empty:
         return None
     year_start = date(date.today().year, 1, 1)
     try:
         idx = series.index
-        if hasattr(idx[0], 'date'):
-            mask = pd.Series([d.date() >= year_start for d in idx], index=idx)
-        else:
-            mask = idx >= str(year_start)
+        mask = idx >= str(year_start) if not hasattr(idx[0], "date") else pd.Series(
+            [d.date() >= year_start for d in idx], index=idx
+        )
         sub = series[mask].dropna()
         if len(sub) < 2:
             return None
@@ -70,7 +71,6 @@ def _ytd_change(series: pd.Series) -> float | None:
 
 
 def _beta_vs_btc(stock: pd.Series, btc: pd.Series, days: int = 90) -> float | None:
-    """Beta of stock returns vs BTC returns over `days` days."""
     try:
         s = stock.dropna().tail(days)
         b = btc.dropna().tail(days)
@@ -94,7 +94,6 @@ def _beta_vs_btc(stock: pd.Series, btc: pd.Series, days: int = 90) -> float | No
 
 
 def _load_company_disk_cache() -> list | None:
-    """Return cached company list if fresh enough, else None."""
     try:
         if _COMPANY_DISK_CACHE.exists():
             obj = json.loads(_COMPANY_DISK_CACHE.read_text())
@@ -112,87 +111,98 @@ def _save_company_disk_cache(companies: list) -> None:
         log.warning("Could not persist company cache: %s", e)
 
 
-async def _fetch_companies(price_s: pd.Series) -> list[dict]:
-    """
-    Fetch mining company equity data via a single yf.download() batch call.
-    Falls back to disk-persisted data when Yahoo Finance is unreachable.
-    """
-    tickers_list = [t for t, _ in MINING_COMPANIES]
-    loop = asyncio.get_event_loop()
-
-    log.info("Mining: bulk-downloading %d company tickers…", len(tickers_list))
+async def _fetch_one_company(
+    session: CffiAsyncSession,
+    ticker: str,
+    name: str,
+    btc_series: pd.Series,
+) -> dict | None:
+    """Fetch one company via Yahoo Finance v8 chart API with Chrome TLS impersonation."""
+    url = _YF_CHART_URL.format(ticker=ticker)
     try:
-        raw: pd.DataFrame = await asyncio.wait_for(
-            loop.run_in_executor(
-                None,
-                partial(
-                    yf.download,
-                    tickers_list,
-                    period="max",
-                    auto_adjust=True,
-                    progress=False,
-                    group_by="ticker",
-                    threads=True,
-                ),
-            ),
-            timeout=60.0,
+        resp = await session.get(
+            url,
+            params={"range": "max", "interval": "1d", "includeAdjustedClose": "true"},
+            timeout=20,
         )
-    except (asyncio.TimeoutError, Exception) as e:
-        log.warning("Bulk yfinance download failed: %s", e)
-        cached = _load_company_disk_cache()
-        if cached:
-            log.info("Falling back to disk cache (%d companies)", len(cached))
-        return cached or []
+        if resp.status_code != 200:
+            log.warning("%s: HTTP %d from Yahoo Finance", ticker, resp.status_code)
+            return None
 
-    if raw is None or raw.empty:
-        log.warning("Bulk download returned empty DataFrame")
-        return _load_company_disk_cache() or []
+        payload = resp.json()
+        result = payload.get("chart", {}).get("result")
+        if not result:
+            log.warning("%s: no chart result", ticker)
+            return None
 
-    is_multi = isinstance(raw.columns, pd.MultiIndex)
+        timestamps = result[0].get("timestamp", [])
+        adj_closes = (
+            result[0].get("indicators", {})
+            .get("adjclose", [{}])[0]
+            .get("adjclose", [])
+        )
+        volumes = result[0].get("indicators", {}).get("quote", [{}])[0].get("volume", [])
 
-    companies: list[dict] = []
-    for ticker, name in MINING_COMPANIES:
-        try:
-            if is_multi:
-                if ticker not in raw.columns.get_level_values(0):
-                    continue
-                close = raw[ticker]["Close"].dropna()
-                vol   = raw[ticker]["Volume"].dropna() if "Volume" in raw[ticker].columns else pd.Series(dtype=float)
-            else:
-                close = raw["Close"].dropna()
-                vol   = raw["Volume"].dropna() if "Volume" in raw.columns else pd.Series(dtype=float)
+        if not timestamps or not adj_closes:
+            return None
 
-            if close.empty:
-                continue
+        close = pd.Series(
+            {pd.Timestamp(ts, unit="s").strftime("%Y-%m-%d"): v
+             for ts, v in zip(timestamps, adj_closes) if v is not None},
+            dtype=float,
+        )
+        close.index = pd.to_datetime(close.index)
 
-            cur_price = float(close.iloc[-1])
-            vol_avg   = int(vol.tail(10).mean()) if not vol.empty else None
+        vol = pd.Series(
+            {pd.Timestamp(ts, unit="s").strftime("%Y-%m-%d"): v
+             for ts, v in zip(timestamps, volumes) if v is not None},
+            dtype=float,
+        )
 
-            companies.append({
-                "ticker":      ticker,
-                "name":        name,
-                "price":       round(cur_price, 2),
-                "change_1d":   pct_change(close, 1),
-                "change_7d":   pct_change(close, 7),
-                "change_30d":  pct_change(close, 30),
-                "change_ytd":  _ytd_change(close),
-                "market_cap":  None,
-                "vol_10d_avg": vol_avg,
-                "beta_btc":    _beta_vs_btc(close, price_s),
-            })
-            log.info("Company OK: %s $%.2f", ticker, cur_price)
-        except Exception as e:
-            log.warning("Company processing failed %s: %s", ticker, e)
+        cur_price = float(close.iloc[-1])
+        vol_avg = int(vol.tail(10).mean()) if not vol.empty else None
+
+        log.info("Company OK: %s $%.2f", ticker, cur_price)
+        return {
+            "ticker":      ticker,
+            "name":        name,
+            "price":       round(cur_price, 2),
+            "change_1d":   pct_change(close, 1),
+            "change_7d":   pct_change(close, 7),
+            "change_30d":  pct_change(close, 30),
+            "change_ytd":  _ytd_change(close),
+            "market_cap":  None,
+            "vol_10d_avg": vol_avg,
+            "beta_btc":    _beta_vs_btc(close, btc_series),
+        }
+    except Exception as e:
+        log.warning("%s: fetch failed: %s", ticker, e)
+        return None
+
+
+async def _fetch_companies(btc_series: pd.Series) -> list[dict]:
+    """Fetch all mining companies concurrently; fall back to disk cache on failure."""
+    log.info("Mining: fetching %d company tickers (Chrome TLS impersonation)…", len(MINING_COMPANIES))
+    try:
+        async with CffiAsyncSession(impersonate=_YF_IMPERSONATE) as session:
+            results = await asyncio.gather(
+                *[_fetch_one_company(session, t, n, btc_series) for t, n in MINING_COMPANIES]
+            )
+        companies = [r for r in results if r is not None]
+    except Exception as e:
+        log.warning("Company fetch session failed: %s", e)
+        companies = []
 
     if companies:
         _save_company_disk_cache(companies)
         return companies
 
-    # Fresh download produced nothing — use disk cache
     cached = _load_company_disk_cache()
     if cached:
-        log.info("Fresh fetch yielded no companies — using disk cache (%d)", len(cached))
+        log.info("Using disk-cached company data (%d companies)", len(cached))
         return cached
+
+    log.warning("No company data available (no fresh data, no disk cache)")
     return []
 
 
@@ -204,11 +214,11 @@ async def fetch_all() -> dict:
 
     log.info("Mining: fetching data…")
 
-    # ── On-chain fundamentals (BitView) ───────────────────────────────────────
+    # ── On-chain fundamentals (BitView — always works) ────────────────────────
     bv = await fetch_bitview_batch(MINING_BV_SERIES)
-    hash_s   = bv.get("hash_rate",      pd.Series(dtype=float)).dropna()
-    puell_s  = bv.get("puell_multiple", pd.Series(dtype=float)).dropna()
-    price_s  = bv.get("price",          pd.Series(dtype=float)).dropna()
+    hash_s  = bv.get("hash_rate",      pd.Series(dtype=float)).dropna()
+    puell_s = bv.get("puell_multiple", pd.Series(dtype=float)).dropna()
+    price_s = bv.get("price",          pd.Series(dtype=float)).dropna()
 
     def _fund(label: str, series: pd.Series, fmt=None) -> dict:
         if series.empty:
@@ -237,34 +247,31 @@ async def fetch_all() -> dict:
         "hash_rate":      _fund("Hash Rate",      hash_s,  fmt=fmt_hash),
         "puell_multiple": _fund("Puell Multiple", puell_s, fmt=lambda v: f"{v:.3f}"),
     }
-
     if not hash_s.empty:
-        hr_hs = float(hash_s.iloc[-1])
-        diff_approx = hr_hs * 600 / (2 ** 32)
+        hr = float(hash_s.iloc[-1])
+        diff = hr * 600 / (2 ** 32)
         fundamentals["difficulty"] = {
-            "label": "Est. Difficulty", "value": round(diff_approx, 0),
-            "value_fmt": f"{diff_approx/1e12:.2f} T", "unit": "",
+            "label": "Est. Difficulty", "value": round(diff, 0),
+            "value_fmt": f"{diff/1e12:.2f} T", "unit": "",
             "zscore": None, "percentile": None,
             "change_30d": None, "change_90d": None,
         }
 
-    # ── Chart series (last 365 days) ──────────────────────────────────────────
-    def _to_series(s: pd.Series, t: int = 365) -> list[dict]:
+    def _to_series(s: pd.Series, tail: int = 365) -> list[dict]:
         return [{"time": idx.strftime("%Y-%m-%d"), "value": round(float(v), 6)}
-                for idx, v in s.tail(t).items()]
+                for idx, v in s.tail(tail).items()]
 
+    # Run BitView chart series + company fetches concurrently
     hash_series  = _to_series(hash_s)
     puell_series = _to_series(puell_s)
-
-    # ── Company equity data ───────────────────────────────────────────────────
-    companies = await _fetch_companies(price_s)
+    companies    = await _fetch_companies(price_s)
 
     result = {
-        "generated_at":    datetime.now(timezone.utc).isoformat(),
-        "fundamentals":    fundamentals,
+        "generated_at":     datetime.now(timezone.utc).isoformat(),
+        "fundamentals":     fundamentals,
         "hash_rate_series": hash_series,
-        "puell_series":    puell_series,
-        "companies":       companies,
+        "puell_series":     puell_series,
+        "companies":        companies,
     }
     _cache = result
     _cache_at = now
