@@ -19,6 +19,8 @@ import config
 import reports
 import insights
 import bitcoin_intel
+import quant
+import mining
 from data import compute_mri, fetch_bitview_batch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -170,6 +172,30 @@ def get_report(date: str):
         raise HTTPException(status_code=500, detail=f"Failed to read report: {e}")
 
 
+@app.get("/report/{date}/infographic.png")
+def get_report_infographic(date: str):
+    from fastapi.responses import Response
+    import report_infographic as ri
+    png_path = config.REPORTS_DIR / f"{date}_report_infographic.png"
+    if not png_path.exists():
+        json_path = config.REPORTS_DIR / f"{date}.json"
+        if not json_path.exists():
+            raise HTTPException(status_code=404, detail=f"No report for {date}")
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            ri.save_infographic(data, config.REPORTS_DIR)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Infographic generation failed: {e}")
+    try:
+        return Response(
+            content=png_path.read_bytes(), media_type="image/png",
+            headers={"Cache-Control": "public, max-age=3600",
+                     "Content-Disposition": f'inline; filename="{date}_report.png"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to serve infographic: {e}")
+
+
 # ── Insights ──────────────────────────────────────────────────────────────────
 
 @app.post("/insights/generate")
@@ -219,6 +245,28 @@ def get_insight(date: str):
         raise HTTPException(status_code=500, detail=f"Failed to read insight: {e}")
 
 
+@app.get("/insights/{date}/infographic.png")
+def get_infographic(date: str):
+    from fastapi.responses import Response
+    png_path = config.INSIGHTS_DIR / f"{date}_infographic.png"
+    # Generate on-demand if missing but JSON exists
+    if not png_path.exists():
+        json_path = config.INSIGHTS_DIR / f"{date}.json"
+        if not json_path.exists():
+            raise HTTPException(status_code=404, detail=f"No insight for {date}")
+        try:
+            insight_data = json.loads(json_path.read_text(encoding="utf-8"))
+            infographic.save_infographic(insight_data, config.INSIGHTS_DIR)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Infographic generation failed: {e}")
+    try:
+        return Response(content=png_path.read_bytes(), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 "Content-Disposition": f'inline; filename="{date}_btc_insight.png"'})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to serve infographic: {e}")
+
+
 # ── Bitcoin Intelligence ──────────────────────────────────────────────────────
 
 @app.post("/intel/generate")
@@ -250,6 +298,212 @@ def intel_latest():
         "narrative_count": len(narratives),
         "entity_count": len(entities),
     }
+
+
+# ── Metrics / Percentiles ────────────────────────────────────────────────────
+
+_metrics_cache: dict | None = None
+_metrics_cache_at: float = 0.0
+METRICS_CACHE_TTL = 3600  # 1 hour
+
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Return all on-chain + macro metrics with current value, z-score, and percentile.
+    Results are cached for 1 hour. Pass ?refresh to force recompute.
+    """
+    import time
+    global _metrics_cache, _metrics_cache_at
+    now = time.time()
+    if _metrics_cache and (now - _metrics_cache_at) < METRICS_CACHE_TTL:
+        return _metrics_cache
+
+    try:
+        from data import fetch_report_data, compute_zscore, compute_percentile, pct_change, rsi
+        import pandas as pd
+
+        raw = await fetch_report_data()
+        bv = raw["bv"]
+        yf_data = raw["yf"]
+
+        def metric(label: str, series: pd.Series, category: str,
+                   fmt_fn=None, unit: str = "") -> dict | None:
+            clean = series.dropna()
+            if clean.empty:
+                return None
+            val = float(clean.iloc[-1])
+            z = compute_zscore(series)
+            pct = compute_percentile(series)
+            if fmt_fn:
+                val_fmt = fmt_fn(val)
+            elif abs(val) >= 1e9:
+                val_fmt = f"{val/1e9:.2f}B{unit}"
+            elif abs(val) >= 1e6:
+                val_fmt = f"{val/1e6:.2f}M{unit}"
+            elif abs(val) >= 1000:
+                val_fmt = f"{val:,.0f}{unit}"
+            else:
+                val_fmt = f"{val:.4g}{unit}"
+            return {
+                "label": label,
+                "category": category,
+                "value": round(val, 6),
+                "value_fmt": val_fmt,
+                "zscore": z,
+                "percentile": pct,
+                "history_points": int(len(clean)),
+            }
+
+        items = []
+
+        # ── Price ─────────────────────────────────────────────────────────────
+        price_s = bv.get("price", pd.Series(dtype=float))
+        if not price_s.dropna().empty:
+            price_val = float(price_s.dropna().iloc[-1])
+            items.append({
+                "label": "BTC Price",
+                "category": "Price",
+                "value": round(price_val, 2),
+                "value_fmt": f"${price_val:,.0f}",
+                "zscore": compute_zscore(price_s),
+                "percentile": compute_percentile(price_s),
+                "history_points": int(price_s.dropna().__len__()),
+            })
+            # RSI
+            rsi_val = rsi(price_s)
+            if rsi_val is not None:
+                items.append({
+                    "label": "RSI (14)",
+                    "category": "Price",
+                    "value": rsi_val,
+                    "value_fmt": f"{rsi_val:.1f}",
+                    "zscore": None,
+                    "percentile": None,
+                    "history_points": 0,
+                    "note": "Overbought >70, Oversold <30",
+                })
+            # 200DMA deviation
+            ma200 = price_s.rolling(200).mean().dropna()
+            if not ma200.empty:
+                dev = round((price_val / float(ma200.iloc[-1]) - 1) * 100, 2)
+                items.append({
+                    "label": "vs 200DMA",
+                    "category": "Price",
+                    "value": dev,
+                    "value_fmt": f"{dev:+.1f}%",
+                    "zscore": None,
+                    "percentile": None,
+                    "history_points": 0,
+                })
+
+        # ── On-chain ──────────────────────────────────────────────────────────
+        for name, label, unit in [
+            ("mvrv", "MVRV Ratio", ""),
+            ("nupl", "NUPL", ""),
+            ("sopr_24h", "SOPR", ""),
+            ("rhodl_ratio", "RHODL Ratio", ""),
+            ("reserve_risk", "Reserve Risk", ""),
+            ("stock_to_flow", "Stock-to-Flow", ""),
+        ]:
+            m = metric(label, bv.get(name, pd.Series(dtype=float)), "On-Chain", unit=unit)
+            if m:
+                items.append(m)
+
+        # ── Pricing models ────────────────────────────────────────────────────
+        for name, label in [
+            ("realized_price", "Realized Price"),
+            ("true_market_mean", "True Market Mean"),
+        ]:
+            m = metric(label, bv.get(name, pd.Series(dtype=float)), "Pricing",
+                       fmt_fn=lambda v: f"${v:,.0f}")
+            if m:
+                items.append(m)
+
+        # MVRV premium
+        rp = bv.get("realized_price", pd.Series(dtype=float)).dropna()
+        if not price_s.dropna().empty and not rp.empty:
+            premium = round((float(price_s.dropna().iloc[-1]) / float(rp.iloc[-1]) - 1) * 100, 1)
+            items.append({
+                "label": "Price vs Realized (premium)",
+                "category": "Pricing",
+                "value": premium,
+                "value_fmt": f"{premium:+.1f}%",
+                "zscore": None,
+                "percentile": None,
+                "history_points": 0,
+            })
+
+        # ── Supply ────────────────────────────────────────────────────────────
+        for name, label, sfx in [
+            ("supply_in_profit", "Supply in Profit", "%"),
+            ("lth_supply", "LTH Supply", " BTC"),
+            ("sth_supply", "STH Supply", " BTC"),
+        ]:
+            m = metric(label, bv.get(name, pd.Series(dtype=float)), "Supply", unit=sfx)
+            if m:
+                items.append(m)
+
+        # ── Mining ────────────────────────────────────────────────────────────
+        for name, label in [
+            ("hash_rate", "Hash Rate"),
+            ("puell_multiple", "Puell Multiple"),
+        ]:
+            m = metric(label, bv.get(name, pd.Series(dtype=float)), "Mining")
+            if m:
+                items.append(m)
+
+        # ── ETF / equities ────────────────────────────────────────────────────
+        for ticker, series in yf_data.items():
+            m = metric(ticker, series, "ETF / Equities",
+                       fmt_fn=lambda v: f"${v:,.2f}")
+            if m:
+                items.append(m)
+
+        result = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "metrics": [m for m in items if m is not None],
+        }
+        _metrics_cache = result
+        _metrics_cache_at = now
+        return result
+
+    except Exception as e:
+        log.error("Metrics endpoint error: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+# ── Quant Models ─────────────────────────────────────────────────────────────
+
+@app.get("/quant")
+async def get_quant():
+    """Run all 7 quant models on BTC price data (cached 4 h)."""
+    try:
+        return await quant.run_all()
+    except Exception as e:
+        log.error("Quant endpoint error: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/quant/refresh")
+async def refresh_quant():
+    """Invalidate the quant cache and recompute."""
+    quant.invalidate_cache()
+    try:
+        return await quant.run_all()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+# ── Mining ────────────────────────────────────────────────────────────────────
+
+@app.get("/mining")
+async def get_mining():
+    """Mining fundamentals + public company data (cached 30 min)."""
+    try:
+        return await mining.fetch_all()
+    except Exception as e:
+        log.error("Mining endpoint error: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────

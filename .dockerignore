@@ -1,0 +1,10 @@
+.env
+.env.local
+.env*.local
+node_modules
+.next
+.git
+data/
+*.db
+*.db-wal
+*.db-shm

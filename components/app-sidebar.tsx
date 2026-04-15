@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import {
   FlaskConical,
@@ -16,6 +16,9 @@ import {
   Settings,
   LayoutGrid,
   Network,
+  Sigma,
+  BarChart2,
+  Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
@@ -32,19 +35,25 @@ import { useWorkbenchSettings } from "@/lib/workbench-settings-dialog-context"
 import { WORKBOOK_TEMPLATES } from "@/lib/workbook-templates"
 
 const DASHBOARDS = [
-  { id: "insights", label: "Insights",               href: "/dashboards/insights" },
   { id: "etf",      label: "Bitcoin ETFs",            href: "/dashboards/etf" },
   { id: "mining",   label: "Mining Companies",        href: "/dashboards/mining" },
   { id: "macro",    label: "Federal Reserve / Macro", href: "/dashboards/macro" },
   { id: "strategy", label: "Strategy & Treasury",     href: "/dashboards/strategy" },
+  { id: "quant",    label: "Quant Models",            href: "/dashboards/quant" },
+]
+
+const INSIGHTS_ITEMS = [
+  { id: "summary",  label: "Daily Summary",  href: "/dashboards/insights", icon: Sparkles },
+  { id: "reports",  label: "Reports",        href: "/reports",             icon: FileText },
+  { id: "metrics",  label: "Metrics",        href: "/dashboards/metrics",  icon: BarChart2 },
 ]
 
 export function AppSidebar({ className }: { className?: string }) {
   const [collapsed, setCollapsed] = useState(false)
-  const [workbenchOpen, setWorkbenchOpen] = useState(true)
-  const [dashboardsOpen, setDashboardsOpen] = useState(false)
+  const [insightsOpen, setInsightsOpen] = useState(true)
+  const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
-  const [reportsOpen, setReportsOpen] = useState(false)
+  const [dashboardsOpen, setDashboardsOpen] = useState(false)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
   const store = useWorkbenchStore()
@@ -82,6 +91,86 @@ export function AppSidebar({ className }: { className?: string }) {
     if (!tpl) return
     store.requestLoad({ ...tpl, savedAt: new Date().toISOString() })
     router.push(withBase("/"))
+  }
+
+  // Helpers
+  function NavSection({
+    icon: Icon,
+    label,
+    open,
+    onToggle,
+    onLabelClick,
+    collapsedTooltip,
+    children,
+  }: {
+    icon: React.ElementType
+    label: string
+    open: boolean
+    onToggle: () => void
+    onLabelClick?: () => void
+    collapsedTooltip: string
+    children: React.ReactNode
+  }) {
+    if (collapsed) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => { setCollapsed(false); onToggle() }}
+              className="flex items-center justify-center w-full rounded-md px-2 py-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            >
+              <Icon className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8}>{collapsedTooltip}</TooltipContent>
+        </Tooltip>
+      )
+    }
+    return (
+      <div>
+        <div className="flex items-center rounded-md hover:bg-accent/30 transition-colors">
+          <button
+            onClick={onLabelClick ?? onToggle}
+            className="flex items-center gap-2.5 flex-1 px-3 py-2 text-sm font-medium text-foreground"
+          >
+            <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="flex-1 text-left">{label}</span>
+          </button>
+          <button
+            onClick={onToggle}
+            className="px-2 py-2 text-muted-foreground/40 hover:text-muted-foreground"
+          >
+            {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        {open && <div className="mt-0.5 space-y-0.5 pl-9">{children}</div>}
+      </div>
+    )
+  }
+
+  function SubLink({
+    href,
+    label,
+    external,
+  }: {
+    href: string
+    label: string
+    external?: boolean
+  }) {
+    const isActive = !external && pathname === withBase(href)
+    return (
+      <button
+        onClick={() => external ? (window.location.href = href) : router.push(withBase(href))}
+        className={cn(
+          "flex items-center w-full rounded-md px-2 py-1 text-xs transition-colors text-left",
+          isActive
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:bg-accent/30 hover:text-accent-foreground"
+        )}
+      >
+        <span className="truncate">{label}</span>
+      </button>
+    )
   }
 
   return (
@@ -141,120 +230,93 @@ export function AppSidebar({ className }: { className?: string }) {
         {/* Navigation */}
         <div className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
 
+          {/* ── Insights ── */}
+          <NavSection
+            icon={Sparkles}
+            label="Insights"
+            open={insightsOpen}
+            onToggle={() => setInsightsOpen((v) => !v)}
+            collapsedTooltip="Insights"
+          >
+            {INSIGHTS_ITEMS.map((item) => (
+              <SubLink key={item.id} href={item.href} label={item.label} />
+            ))}
+          </NavSection>
+
           {/* ── Workbench ── */}
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => { setCollapsed(false); setWorkbenchOpen(true) }}
-                  className="flex items-center justify-center w-full rounded-md px-2 py-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  <FlaskConical className="h-4 w-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>Workbench</TooltipContent>
-            </Tooltip>
-          ) : (
-            <div>
-              <div className="flex items-center rounded-md hover:bg-accent/30 transition-colors">
-                <button
-                  onClick={() => router.push(withBase("/"))}
-                  className="flex items-center gap-2.5 flex-1 px-3 py-2 text-sm font-medium text-foreground"
-                >
-                  <FlaskConical className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="flex-1 text-left">Workbench</span>
-                </button>
-                <button
-                  onClick={() => setWorkbenchOpen((v) => !v)}
-                  className="px-2 py-2 text-muted-foreground/40 hover:text-muted-foreground"
-                >
-                  {workbenchOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                </button>
-              </div>
+          <NavSection
+            icon={FlaskConical}
+            label="Workbench"
+            open={workbenchOpen}
+            onToggle={() => setWorkbenchOpen((v) => !v)}
+            onLabelClick={() => router.push(withBase("/"))}
+            collapsedTooltip="Workbench"
+          >
+            {/* New chart */}
+            <button
+              onClick={() => store.requestNewChart()}
+              className="flex items-center gap-1.5 w-full rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent/30 hover:text-accent-foreground transition-colors"
+            >
+              <span>New Chart</span>
+              <Plus className="h-3 w-3 shrink-0" />
+            </button>
 
-              {workbenchOpen && (
-                <div className="mt-0.5 space-y-0.5 pl-9">
+            {/* Saved workbooks */}
+            {store.savedWorkbooks.map((wb, i) => {
+              const isActive = store.activeWorkbookName === wb.name
+              const isDragging = dragIndex === i
+              const isDropTarget = dropIndex === i && dragIndex !== i
+              return (
+                <div
+                  key={wb.id}
+                  draggable
+                  onDragStart={handleDragStart(i)}
+                  onDragOver={handleDragOver(i)}
+                  onDrop={handleDrop(i)}
+                  onDragEnd={handleDragEnd}
+                  className={cn(
+                    "flex items-center rounded-md transition-colors group cursor-grab active:cursor-grabbing",
+                    isDragging && "opacity-30",
+                    isDropTarget && "border-t border-primary/40",
+                    isActive
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-accent/40 hover:text-accent-foreground"
+                  )}
+                >
                   <button
-                    onClick={() => store.requestNewChart()}
-                    className="flex items-center gap-1.5 w-full rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent/30 hover:text-accent-foreground transition-colors"
+                    onClick={() => store.requestLoad(wb)}
+                    className="flex-1 flex items-center px-2 py-1 text-left min-w-0"
                   >
-                    <span>New Chart</span>
-                    <Plus className="h-3 w-3 shrink-0" />
+                    <span className="block text-xs truncate">{wb.name}</span>
                   </button>
-
-                  {store.savedWorkbooks.map((wb, i) => {
-                    const isActive = store.activeWorkbookName === wb.name
-                    const isDragging = dragIndex === i
-                    const isDropTarget = dropIndex === i && dragIndex !== i
-                    return (
-                      <div
-                        key={wb.id}
-                        draggable
-                        onDragStart={handleDragStart(i)}
-                        onDragOver={handleDragOver(i)}
-                        onDrop={handleDrop(i)}
-                        onDragEnd={handleDragEnd}
-                        className={cn(
-                          "flex items-center rounded-md transition-colors group cursor-grab active:cursor-grabbing",
-                          isDragging && "opacity-30",
-                          isDropTarget && "border-t border-primary/40",
-                          isActive
-                            ? "bg-accent text-accent-foreground"
-                            : "text-muted-foreground hover:bg-accent/40 hover:text-accent-foreground"
-                        )}
-                      >
-                        <button
-                          onClick={() => store.requestLoad(wb)}
-                          className="flex-1 flex items-center px-2 py-1 text-left min-w-0"
-                        >
-                          <span className="block text-xs truncate">{wb.name}</span>
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); store.deleteWorkbook(wb.id) }}
-                          className="p-1 mr-0.5 rounded text-transparent group-hover:text-muted-foreground/30 hover:!text-destructive/70 transition-colors shrink-0"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-2.5 w-2.5" />
-                        </button>
-                      </div>
-                    )
-                  })}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); store.deleteWorkbook(wb.id) }}
+                    className="p-1 mr-0.5 rounded text-transparent group-hover:text-muted-foreground/30 hover:!text-destructive/70 transition-colors shrink-0"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-2.5 w-2.5" />
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
+              )
+            })}
 
-          {/* ── Templates ── */}
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => { setCollapsed(false); setTemplatesOpen(true) }}
-                  className="flex items-center justify-center w-full rounded-md px-2 py-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  <BookOpen className="h-4 w-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>Templates</TooltipContent>
-            </Tooltip>
-          ) : (
-            <div>
+            {/* Templates (nested under Workbench) */}
+            <div className="pt-1">
               <button
                 onClick={() => setTemplatesOpen((v) => !v)}
-                className="flex items-center gap-2.5 w-full rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent/30 transition-colors"
+                className="flex items-center gap-1.5 w-full rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent/30 hover:text-accent-foreground transition-colors"
               >
-                <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <BookOpen className="h-3 w-3 shrink-0" />
                 <span className="flex-1 text-left">Templates</span>
-                {templatesOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/40" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/40" />}
+                {templatesOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </button>
-
               {templatesOpen && (
-                <div className="mt-0.5 space-y-0.5 pl-9">
+                <div className="mt-0.5 space-y-0.5 pl-4">
                   {WORKBOOK_TEMPLATES.map((tpl) => (
                     <button
                       key={tpl.id}
                       onClick={() => loadTemplate(tpl.id)}
-                      className="flex items-center gap-1.5 w-full rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent/30 hover:text-accent-foreground transition-colors text-left"
+                      className="flex items-center w-full rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent/30 hover:text-accent-foreground transition-colors text-left"
                     >
                       <span className="truncate">{tpl.name}</span>
                     </button>
@@ -262,89 +324,7 @@ export function AppSidebar({ className }: { className?: string }) {
                 </div>
               )}
             </div>
-          )}
-
-          {/* ── Dashboards ── */}
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => { setCollapsed(false); setDashboardsOpen(true) }}
-                  className="flex items-center justify-center w-full rounded-md px-2 py-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>Dashboards</TooltipContent>
-            </Tooltip>
-          ) : (
-            <div>
-              <button
-                onClick={() => setDashboardsOpen((v) => !v)}
-                className="flex items-center gap-2.5 w-full rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent/30 transition-colors"
-              >
-                <LayoutGrid className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="flex-1 text-left">Dashboards</span>
-                {dashboardsOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/40" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/40" />}
-              </button>
-
-              {dashboardsOpen && (
-                <div className="mt-0.5 space-y-0.5 pl-9">
-                  {DASHBOARDS.map((d) => {
-                    const isActive = pathname === withBase(d.href)
-                    return (
-                      <button
-                        key={d.id}
-                        onClick={() => router.push(withBase(d.href))}
-                        className={cn(
-                          "flex items-center w-full rounded-md px-2 py-1 text-xs transition-colors text-left",
-                          isActive
-                            ? "bg-accent text-accent-foreground"
-                            : "text-muted-foreground hover:bg-accent/30 hover:text-accent-foreground"
-                        )}
-                      >
-                        <span className="truncate">{d.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Reports ── */}
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => router.push(withBase("/reports"))}
-                  className={cn(
-                    "flex items-center justify-center w-full rounded-md px-2 py-2 transition-colors",
-                    pathname === withBase("/reports")
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  )}
-                >
-                  <FileText className="h-4 w-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>Reports</TooltipContent>
-            </Tooltip>
-          ) : (
-            <button
-              onClick={() => router.push(withBase("/reports"))}
-              className={cn(
-                "flex items-center gap-2.5 w-full rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                pathname === withBase("/reports")
-                  ? "bg-accent text-accent-foreground"
-                  : "text-foreground hover:bg-accent/30"
-              )}
-            >
-              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1 text-left">Reports</span>
-              <span className="text-[10px] text-muted-foreground/40">Overnight</span>
-            </button>
-          )}
+          </NavSection>
 
           {/* ── Intel ── */}
           {collapsed ? (
@@ -369,6 +349,19 @@ export function AppSidebar({ className }: { className?: string }) {
               <span className="text-[10px] text-muted-foreground/40">Daily</span>
             </button>
           )}
+
+          {/* ── Dashboards ── */}
+          <NavSection
+            icon={LayoutGrid}
+            label="Dashboards"
+            open={dashboardsOpen}
+            onToggle={() => setDashboardsOpen((v) => !v)}
+            collapsedTooltip="Dashboards"
+          >
+            {DASHBOARDS.map((d) => (
+              <SubLink key={d.id} href={d.href} label={d.label} />
+            ))}
+          </NavSection>
 
         </div>
 

@@ -48,7 +48,7 @@ services:
       analytics:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/api/health"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:3002${NEXT_PUBLIC_BASE_PATH:-}/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -64,6 +64,9 @@ services:
       FRED_API_KEY: ${FRED_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_DEFAULT_MODEL: ${OPENROUTER_DEFAULT_MODEL:-openai/gpt-4o-mini}
+      LOCAL_LLM_URL: ${LOCAL_LLM_URL:-}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-gemma3:4b}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-ollama}
       REPORTS_DIR: /app/data/reports
       REPORT_HOUR_UTC: ${REPORT_HOUR_UTC:-2}
     volumes:

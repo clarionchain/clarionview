@@ -31,6 +31,15 @@ function redirectToLogin(request: NextRequest): NextResponse {
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
+
+  // Strip stale /workbench prefix when BASE is empty (old bookmarks / prod vs dev mismatch)
+  if (!BASE && pathname.startsWith("/workbench")) {
+    const stripped = pathname.slice("/workbench".length) || "/"
+    const url = request.nextUrl.clone()
+    url.pathname = stripped
+    return NextResponse.redirect(url, 301)
+  }
+
   const path = logicalPath(pathname)
 
   if (isPublicLogicalPath(path)) {
@@ -64,6 +73,17 @@ export async function middleware(request: NextRequest) {
 
   try {
     await jwtVerify(token, secret)
+
+    // Auto-redirect mobile browsers hitting "/" to "/m"
+    if (path === "/" && !path.startsWith("/api/")) {
+      const ua = request.headers.get("user-agent") ?? ""
+      if (/iPhone|Android|iPad|Mobile/i.test(ua)) {
+        const url = request.nextUrl.clone()
+        url.pathname = BASE ? `${BASE}/m` : "/m"
+        return NextResponse.redirect(url)
+      }
+    }
+
     const res = NextResponse.next()
     // Avoid stale cached HTML: shell can load without a fresh auth check while API calls get 401.
     if (!path.startsWith("/api/")) {

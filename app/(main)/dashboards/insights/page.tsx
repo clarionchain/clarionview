@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   Lightbulb, Loader2, RefreshCw, AlertCircle, Zap,
-  TrendingUp, TrendingDown, Activity, ChevronRight, Calendar,
+  TrendingUp, TrendingDown, Activity, ChevronRight, Calendar, Download,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import { withBase } from "@/lib/base-path"
@@ -239,6 +239,14 @@ export default function InsightsPage() {
                       {warningCount} warning
                     </span>
                   )}
+                  <a
+                    href={`/api/insights/${insight.date}/infographic.png`}
+                    download={`${insight.date}_btc_insight.png`}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded border border-border/40 bg-card/60 text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
+                  >
+                    <Download className="h-3 w-3" />
+                    PNG
+                  </a>
                 </div>
               </div>
 

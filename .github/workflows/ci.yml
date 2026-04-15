@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ── Next.js ────────────────────────────────────────────────────────────────
+  nextjs:
+    name: Next.js — lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx next lint --max-warnings 0
+        continue-on-error: true  # lint warnings don't block merge
+
+  # ── Python analytics service ───────────────────────────────────────────────
+  python:
+    name: Python — tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+  # ── Docker build check ─────────────────────────────────────────────────────
+  docker:
+    name: Docker — build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Next.js image
+        run: |
+          docker build \
+            --build-arg WORKBENCH_SESSION_SECRET=ci_test_secret_min_32_characters_ok \
+            --build-arg NEXT_PUBLIC_BASE_PATH= \
+            -t clarionview-nextjs:ci .
+
+      - name: Build analytics image
+        run: docker build -t clarionview-analytics:ci ./python
