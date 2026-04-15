@@ -53,7 +53,7 @@ export function AppSidebar({ className }: { className?: string }) {
   const [insightsOpen, setInsightsOpen] = useState(true)
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
-  const [dashboardsOpen, setDashboardsOpen] = useState(false)
+  const [dashboardsOpen, setDashboardsOpen] = useState(true)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
   const store = useWorkbenchStore()

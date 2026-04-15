@@ -41,7 +41,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [insightsOpen, setInsightsOpen] = useState(true)
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
-  const [dashboardsOpen, setDashboardsOpen] = useState(false)
+  const [dashboardsOpen, setDashboardsOpen] = useState(true)
   const store = useWorkbenchStore()
   const { openSettings } = useWorkbenchSettings()
   const router = useRouter()
