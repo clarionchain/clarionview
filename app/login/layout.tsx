@@ -1,8 +1,8 @@
 import type { Metadata } from "next"
 
 export const metadata: Metadata = {
-  title: "Sign in · DC Workbench",
-  description: "Sign in to ClarionChain DC Workbench",
+  title: "Sign in · ClarionView",
+  description: "Sign in to ClarionView",
 }
 
 export default function LoginLayout({ children }: { children: React.ReactNode }) {

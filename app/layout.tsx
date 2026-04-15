@@ -6,7 +6,7 @@ import { AppProviders } from "@/components/app-providers"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "DC Workbench - Bitcoin On-Chain Analytics",
+  title: "ClarionView — Bitcoin On-Chain Analytics",
   description: "Bitcoin on-chain data workbench powered by TradingView charts and bitview.space",
 }
 

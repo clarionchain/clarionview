@@ -4,7 +4,7 @@ import { getUserById } from "@/lib/db"
 import { OpenPreferencesRedirect } from "@/components/account/open-preferences-redirect"
 
 export const metadata = {
-  title: "Account · DC Workbench",
+  title: "Account · ClarionView",
 }
 
 export default async function AccountPage() {

@@ -32,11 +32,20 @@ export type TVChartHandle = {
   getScreenshotDataUrl: () => string | null
 }
 
+/**
+ * Mutable ref filled by TVChart with a screenshot function.
+ * Because dynamic() strips forwardRef, we pass this plain object instead.
+ * The parent reads it via screenshotFnRef.current?.().
+ */
+export type ScreenshotFnRef = React.MutableRefObject<(() => string | null) | null>
+
 interface TVChartProps {
   series: ActiveSeries[]
   paneScales: Record<number, "log" | "linear">
   onTogglePaneScale: (paneIndex: number) => void
   onCrosshairMove?: (data: CrosshairValues | null) => void
+  /** Plain ref that TVChart fills with the screenshot function (bypasses dynamic() ref stripping). */
+  screenshotFnRef?: ScreenshotFnRef
 }
 
 /** Same hex as `--workbench-shell` (sidebar / assistant / chart). */
@@ -67,7 +76,7 @@ type AnySeriesApi = {
 }
 
 const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart(
-  { series, paneScales, onTogglePaneScale, onCrosshairMove },
+  { series, paneScales, onTogglePaneScale, onCrosshairMove, screenshotFnRef },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -105,6 +114,22 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart(
     }),
     []
   )
+
+  // Fill screenshotFnRef so the parent can trigger a screenshot from inside this
+  // component (where the chart API and its WebGL buffer are still valid).
+  useEffect(() => {
+    if (!screenshotFnRef) return
+    screenshotFnRef.current = () => {
+      const chart = chartRef.current
+      if (!chart) return null
+      try {
+        return chart.takeScreenshot().toDataURL("image/png")
+      } catch {
+        return null
+      }
+    }
+    return () => { screenshotFnRef.current = null }
+  }, [screenshotFnRef])
 
   const [panePositions, setPanePositions] = useState<{ top: number; height: number }[]>([])
 

@@ -12,9 +12,10 @@ let createChart: typeof import("lightweight-charts").createChart | null = null
 let LineSeries: typeof import("lightweight-charts").LineSeries | null = null
 
 interface TickerDef {
-  seriesName: string   // e.g. "yf:IBIT" or "fred:FEDFUNDS"
-  label: string        // human display name
+  seriesName: string          // e.g. "yf:IBIT" or "fred:FEDFUNDS"
+  label: string               // human display name
   color: string
+  axis?: "left" | "right"    // default "right"; "left" = raw price, not normalized
 }
 
 interface SeriesDataPoint {
@@ -34,6 +35,8 @@ export interface DashboardPageProps {
   tickers: TickerDef[]
   /** Workbook template id to open when user clicks "Open in Workbench" */
   templateId: string
+  /** Exclude tickers with this axis value from the stats table */
+  excludeAxisFromStats?: "left" | "right"
 }
 
 function pctChange(data: SeriesDataPoint[], days: number): number | null {
@@ -55,7 +58,7 @@ function PctBadge({ value }: { value: number | null }) {
   )
 }
 
-export function DashboardPage({ title, description, tickers, templateId }: DashboardPageProps) {
+export function DashboardPage({ title, description, tickers, templateId, excludeAxisFromStats }: DashboardPageProps) {
   const [states, setStates] = useState<Record<string, TickerState>>(
     Object.fromEntries(tickers.map((t) => [t.seriesName, { data: [], loading: true, error: null }]))
   )
@@ -104,47 +107,62 @@ export function DashboardPage({ title, description, tickers, templateId }: Dashb
 
       const container = chartContainerRef.current!
 
+      const hasLeftAxis = tickers.some((t) => t.axis === "left")
+
       if (!chartRef.current) {
         chartRef.current = createChart(container, {
           layout: { background: { color: "transparent" }, textColor: "#9ca3af" },
           grid: { vertLines: { color: "#1f2937" }, horzLines: { color: "#1f2937" } },
           rightPriceScale: { borderColor: "#374151" },
+          leftPriceScale: {
+            visible: hasLeftAxis,
+            borderColor: "#374151",
+          },
           timeScale: { borderColor: "#374151", timeVisible: false },
           width: container.clientWidth,
           height: 320,
         })
+      } else if (hasLeftAxis) {
+        chartRef.current.applyOptions({ leftPriceScale: { visible: true } })
       }
 
       const chart = chartRef.current
 
-      // Normalize to base 100 at earliest common date
       const allData = tickers
         .map((t) => states[t.seriesName]?.data ?? [])
         .filter((d) => d.length > 0)
 
       if (allData.length === 0) return
 
-      // Find earliest date all series share (or just use each series start)
       for (const ticker of tickers) {
         const raw = states[ticker.seriesName]?.data
         if (!raw || raw.length === 0) continue
 
-        const base = raw[0].value
-        if (base === 0) continue
-        const normalized = raw.map((d) => ({ time: d.time as `${number}-${number}-${number}`, value: (d.value / base) * 100 }))
+        const isLeft = ticker.axis === "left"
+
+        // Left-axis series: raw price. Right-axis series: normalized to 100 at inception.
+        let displayData: { time: `${number}-${number}-${number}`; value: number }[]
+        if (isLeft) {
+          displayData = raw.map((d) => ({ time: d.time as `${number}-${number}-${number}`, value: d.value }))
+        } else {
+          const base = raw[0].value
+          if (base === 0) continue
+          displayData = raw.map((d) => ({ time: d.time as `${number}-${number}-${number}`, value: (d.value / base) * 100 }))
+        }
 
         let lineSeries = seriesRefs.current.get(ticker.seriesName)
         if (!lineSeries) {
           lineSeries = chart.addSeries(LineSeries!, {
             color: ticker.color,
-            lineWidth: 2,
+            lineWidth: isLeft ? 1 : 2,
             title: ticker.label,
             priceLineVisible: false,
-            lastValueVisible: true,
+            lastValueVisible: !isLeft,
+            priceScaleId: isLeft ? "left" : "right",
           })
           seriesRefs.current.set(ticker.seriesName, lineSeries)
         }
-        lineSeries.setData(normalized)
+        lineSeries.setData(displayData)
       }
 
       chart.timeScale().fitContent()
@@ -202,7 +220,11 @@ export function DashboardPage({ title, description, tickers, templateId }: Dashb
       {/* Comparison chart */}
       <div className="rounded-lg border border-border/30 bg-card/40 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-border/20 flex items-center gap-2">
-          <span className="text-xs text-muted-foreground/60 font-medium">Performance (indexed to 100 at series start)</span>
+          <span className="text-xs text-muted-foreground/60 font-medium">
+            {tickers.some((t) => t.axis === "left")
+              ? "ETFs indexed to 100 at inception (right) · BTC price USD (left)"
+              : "Performance (indexed to 100 at series start)"}
+          </span>
           {anyLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/40" />}
         </div>
         <div className="px-2 pt-2">
@@ -234,7 +256,7 @@ export function DashboardPage({ title, description, tickers, templateId }: Dashb
             </tr>
           </thead>
           <tbody>
-            {tickers.map((ticker) => {
+            {(excludeAxisFromStats ? tickers.filter((t) => t.axis !== excludeAxisFromStats) : tickers).map((ticker) => {
               const state = states[ticker.seriesName]
               const last = state?.data?.[state.data.length - 1]?.value ?? null
               return (

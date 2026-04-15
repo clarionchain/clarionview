@@ -25,8 +25,10 @@ import { withBase } from "@/lib/base-path"
 import { cn } from "@/lib/utils"
 import { seriesPreviewCssColor } from "@/lib/series-visual"
 
+// dynamic() strips ref forwarding — screenshot capture uses chartContainerRef (DOM canvas query) instead.
+// TVChartHandle is still used for getVisibleTimeRange() via the ref on the underlying component.
 const TVChart = dynamic(() => import("./tv-chart"), { ssr: false }) as React.ComponentType<
-  React.ComponentProps<typeof import("./tv-chart").default> & { ref?: React.Ref<TVChartHandle> }
+  React.ComponentProps<typeof import("./tv-chart").default>
 >
 
 const STORAGE_KEY = "dc_workbench_state"
@@ -95,6 +97,9 @@ export function WorkbenchContainer() {
   >({})
   const fetchingRef = useRef<Set<string>>(new Set())
   const chartRef = useRef<TVChartHandle | null>(null)
+  const chartContainerRef = useRef<HTMLDivElement>(null)
+  // Filled by TVChart from inside the component so screenshot works with WebGL buffers
+  const screenshotFnRef = useRef<(() => string | null) | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(true)
   const [assistantPrefsLoaded, setAssistantPrefsLoaded] = useState(false)
   /** Wait for /api/account/me so we never fire series fetches against a dead session (avoids bogus banners + stale cached shell). */
@@ -353,7 +358,7 @@ export function WorkbenchContainer() {
           color: pickColor(usedColors),
           colorOpacity: 1,
           lineStyle: "solid" as const,
-          priceScaleId: prev.length === 0 ? ("right" as const) : ("left" as const),
+          priceScaleId: "right" as const,
           type: "line" as const,
           visible: true,
         },
@@ -374,7 +379,7 @@ export function WorkbenchContainer() {
           color: pickColor(usedColors),
           colorOpacity: 1,
           lineStyle: "solid" as const,
-          priceScaleId: "left" as const,
+          priceScaleId: "right" as const,
           type: "line" as const,
           visible: true,
           isFormula: true,
@@ -545,37 +550,27 @@ export function WorkbenchContainer() {
               namesNeeded.add(c.seriesName)
             }
           }
-          const entries = Object.entries(loadErrors).filter(([n]) => namesNeeded.has(n))
-          if (entries.length === 0) return null
+          // Backend config errors (503) are invisible to users — they can't fix them
+          const actionableEntries = Object.entries(loadErrors).filter(
+            ([n, e]) => namesNeeded.has(n) && e.status !== 503
+          )
+          if (actionableEntries.length === 0) return null
 
           const allSession =
-            entries.length > 0 &&
-            entries.every(
+            actionableEntries.length > 0 &&
+            actionableEntries.every(
               ([, e]) =>
                 e.status === 401 &&
                 (e.code === "WORKBENCH_SESSION" ||
                   (e.code === undefined && e.message === "Unauthorized"))
             )
-          return (
+          if (allSession) return (
             <div className="shrink-0 border-b border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
-              {allSession ? (
-                <>
-                  <span className="font-medium">Could not verify your login for data requests.</span>
-                  <span className="mt-1 block text-amber-200/75">
-                    Try refreshing the page. If this persists, sign out and sign in again.
-                  </span>
-                </>
-              ) : (
-                <span className="font-medium">Could not load some series.</span>
-              )}
-              {entries.map(([n, err]) => (
-                <span key={n} className="block text-amber-200/70">
-                  {n}: {safeLoadErrorLine(err.message)}
-                  {err.status ? ` (HTTP ${err.status})` : ""}
-                </span>
-              ))}
+              <span className="font-medium">Session expired.</span>
+              <span className="ml-1 text-amber-200/75">Please sign out and sign back in.</span>
             </div>
           )
+          return null
         })()}
         <div className="flex-1 relative min-h-0">
           {isEmpty ? (
@@ -596,13 +591,16 @@ export function WorkbenchContainer() {
               </button>
             </div>
           ) : (
-            <TVChart
-              ref={chartRef}
-              series={activeSeries}
-              paneScales={paneScales}
-              onTogglePaneScale={togglePaneScale}
-              onCrosshairMove={handleCrosshairMove}
-            />
+            <div ref={chartContainerRef} className="w-full h-full">
+              <TVChart
+                ref={chartRef}
+                series={activeSeries}
+                paneScales={paneScales}
+                onTogglePaneScale={togglePaneScale}
+                onCrosshairMove={handleCrosshairMove}
+                screenshotFnRef={screenshotFnRef}
+              />
+            </div>
           )}
 
           {/* Crosshair tooltip */}
@@ -664,6 +662,7 @@ export function WorkbenchContainer() {
                 crosshair={crosshair}
                 paneScales={paneScales}
                 chartRef={chartRef}
+                screenshotFnRef={screenshotFnRef}
               />
             </div>
             <div
@@ -695,6 +694,7 @@ export function WorkbenchContainer() {
                   crosshair={crosshair}
                   paneScales={paneScales}
                   chartRef={chartRef}
+                  screenshotFnRef={screenshotFnRef}
                 />
               </div>
             </div>

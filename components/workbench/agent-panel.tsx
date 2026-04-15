@@ -263,6 +263,10 @@ export function AgentPanel({
 
       if (!res.body) { setError("No response body"); setThread((prev) => prev.slice(0, -1)); return }
 
+      // Successful response — clear any stale auth warning
+      setChatReady(true)
+      setChatHint(null)
+
       let assistant = ""
       setThread((prev) => [...prev, { role: "assistant", content: "" }])
 
@@ -439,6 +443,10 @@ export function AgentPanel({
       }
 
       if (!res.body) { setError("No response body"); setThread([]); return }
+
+      // Successful response — clear any stale auth warning
+      setChatReady(true)
+      setChatHint(null)
 
       let assistant = ""
       setThread([{ role: "user", content: prompt }, { role: "assistant", content: "" }])

@@ -4,7 +4,7 @@ import { isUserAdmin } from "@/lib/db"
 import { AdminUsersClient } from "@/components/admin/admin-users-client"
 
 export const metadata = {
-  title: "Users · DC Workbench",
+  title: "Users · ClarionView",
 }
 
 export default async function AdminUsersPage() {
