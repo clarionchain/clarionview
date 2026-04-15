@@ -496,6 +496,189 @@ async def get_metrics():
         raise HTTPException(status_code=503, detail=str(e))
 
 
+# ── Mobile Metrics (8-year z-score + percentile quantile) ────────────────────
+
+_mobile_metrics_cache: dict | None = None
+_mobile_metrics_cache_at: float = 0.0
+MOBILE_METRICS_CACHE_TTL = 3600
+
+
+def _zscore_8y(series: pd.Series):
+    """Z-score of current value relative to last 8 years (2920 days)."""
+    import math
+    window = series.dropna().tail(2920)
+    if len(window) < 30:
+        return None
+    std = float(window.std())
+    if std == 0 or not math.isfinite(std):
+        return None
+    z = float((window.iloc[-1] - window.mean()) / std)
+    return round(z, 3) if math.isfinite(z) else None
+
+
+def _percentile_8y(series: pd.Series):
+    """Percentile of current value within last 8 years (0–100)."""
+    from scipy import stats as scipy_stats
+    window = series.dropna().tail(2920)
+    if len(window) < 30:
+        return None
+    return round(float(scipy_stats.percentileofscore(window, window.iloc[-1], kind="rank")), 1)
+
+
+@app.get("/metrics/mobile")
+async def get_mobile_metrics():
+    """
+    10 curated metrics for the mobile view — each with 8-year z-score and
+    5%-increment percentile quantile. Cached for 1 hour.
+    """
+    import math, time
+    global _mobile_metrics_cache, _mobile_metrics_cache_at
+    now = time.time()
+    if _mobile_metrics_cache and (now - _mobile_metrics_cache_at) < MOBILE_METRICS_CACHE_TTL:
+        return _mobile_metrics_cache
+
+    try:
+        bv_names = [
+            "mvrv", "nupl", "sopr_24h", "puell_multiple",
+            "reserve_risk", "supply_in_profit", "hash_rate", "rhodl_ratio",
+        ]
+        bv = await fetch_bitview_batch(bv_names)
+
+        # FRED: Fed Funds Rate
+        fedfunds_s = pd.Series(dtype=float)
+        if config.FRED_API_KEY:
+            try:
+                resp = httpx.get(
+                    "https://api.stlouisfed.org/fred/series/observations",
+                    params={
+                        "series_id": "FEDFUNDS",
+                        "api_key": config.FRED_API_KEY,
+                        "file_type": "json",
+                        "observation_start": "2012-01-01",
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                obs = resp.json().get("observations", [])
+                pairs = {o["date"]: float(o["value"]) for o in obs if o["value"] != "."}
+                fedfunds_s = pd.Series(pairs, dtype=float)
+            except Exception as e:
+                log.warning("FRED FEDFUNDS fetch failed: %s", e)
+
+        # MRI index as time series
+        mri_result = await compute_mri()
+        mri_series = pd.Series(dtype=float)
+        if mri_result and "mri_index" in mri_result:
+            mri_series = pd.Series(
+                {pd.Timestamp(p["time"]): p["value"] for p in mri_result["mri_index"]},
+                dtype=float,
+            )
+
+        def make_metric(label, series, category, description, fmt_fn=None):
+            clean = series.dropna()
+            if clean.empty:
+                return None
+            val = float(clean.iloc[-1])
+            z8 = _zscore_8y(series)
+            p8 = _percentile_8y(series)
+            if fmt_fn:
+                val_fmt = fmt_fn(val)
+            elif abs(val) >= 1e9:
+                val_fmt = f"{val/1e9:.2f}B"
+            elif abs(val) >= 1e6:
+                val_fmt = f"{val/1e6:.2f}M"
+            elif abs(val) >= 1000:
+                val_fmt = f"{val:,.0f}"
+            else:
+                val_fmt = f"{val:.4g}"
+            if z8 is None:
+                signal = "neutral"
+            elif z8 >= 2.0:
+                signal = "overbought"
+            elif z8 >= 1.0:
+                signal = "elevated"
+            elif z8 <= -2.0:
+                signal = "oversold"
+            elif z8 <= -1.0:
+                signal = "depressed"
+            else:
+                signal = "neutral"
+            bucket = min(19, int(p8 / 5)) if p8 is not None else None
+            return {
+                "label": label,
+                "category": category,
+                "description": description,
+                "value": round(val, 8),
+                "value_fmt": val_fmt,
+                "zscore_8y": z8,
+                "percentile_8y": p8,
+                "quantile_bucket": bucket,
+                "signal": signal,
+            }
+
+        metrics_list = []
+
+        m = make_metric("MRI Index", mri_series, "Quant",
+                        "Mean Reversion Index — composite of 6 on-chain pricing models",
+                        fmt_fn=lambda v: f"{v:.1f}")
+        if m: metrics_list.append(m)
+
+        m = make_metric("MVRV Ratio", bv.get("mvrv", pd.Series(dtype=float)), "On-Chain",
+                        "Market Value to Realized Value — measures aggregate unrealized profit/loss")
+        if m: metrics_list.append(m)
+
+        m = make_metric("NUPL", bv.get("nupl", pd.Series(dtype=float)), "P&L",
+                        "Net Unrealized Profit/Loss — overall holder profitability (>0.75 euphoria, <0 capitulation)",
+                        fmt_fn=lambda v: f"{v:.3f}")
+        if m: metrics_list.append(m)
+
+        m = make_metric("Puell Multiple", bv.get("puell_multiple", pd.Series(dtype=float)), "Mining",
+                        "Daily miner revenue vs 365-day moving average — mining profitability cycle indicator")
+        if m: metrics_list.append(m)
+
+        m = make_metric("SOPR", bv.get("sopr_24h", pd.Series(dtype=float)), "P&L",
+                        "Spent Output Profit Ratio — ratio of realized value to value at last move (>1 profit, <1 loss)",
+                        fmt_fn=lambda v: f"{v:.4f}")
+        if m: metrics_list.append(m)
+
+        m = make_metric("Reserve Risk", bv.get("reserve_risk", pd.Series(dtype=float)), "On-Chain",
+                        "Risk/reward vs long-term holder conviction — low = high confidence buy, high = sell signal",
+                        fmt_fn=lambda v: f"{v:.6f}")
+        if m: metrics_list.append(m)
+
+        m = make_metric("Supply in Profit", bv.get("supply_in_profit", pd.Series(dtype=float)), "Supply",
+                        "% of circulating supply last moved at a lower price — high = holders mostly in profit",
+                        fmt_fn=lambda v: f"{v:.1f}%")
+        if m: metrics_list.append(m)
+
+        m = make_metric("Hash Rate", bv.get("hash_rate", pd.Series(dtype=float)), "Mining",
+                        "Total network hash rate (EH/s) — measures miner commitment and network security",
+                        fmt_fn=lambda v: f"{v:.1f} EH/s")
+        if m: metrics_list.append(m)
+
+        m = make_metric("RHODL Ratio", bv.get("rhodl_ratio", pd.Series(dtype=float)), "Liquidity",
+                        "Realized HODL Ratio — long-term vs short-term holder dominance; high = illiquid supply",
+                        fmt_fn=lambda v: f"{v:,.0f}")
+        if m: metrics_list.append(m)
+
+        m = make_metric("Fed Funds Rate", fedfunds_s, "Rates",
+                        "US Federal Funds target rate — macro liquidity proxy; falling rates = risk-on tailwind",
+                        fmt_fn=lambda v: f"{v:.2f}%")
+        if m: metrics_list.append(m)
+
+        result = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "metrics": metrics_list,
+        }
+        _mobile_metrics_cache = result
+        _mobile_metrics_cache_at = now
+        return result
+
+    except Exception as e:
+        log.error("Mobile metrics error: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 # ── Quant Models ─────────────────────────────────────────────────────────────
 
 @app.get("/quant")
