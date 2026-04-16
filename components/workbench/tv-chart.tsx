@@ -391,7 +391,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart(
           key={i}
           onClick={() => onTogglePaneScale(i)}
           className="absolute z-10 px-1.5 py-0.5 text-[10px] font-medium rounded bg-card/70 text-muted-foreground/40 hover:text-foreground hover:bg-card transition-colors cursor-pointer"
-          style={{ top: pos.top + 4, right: 80 }}
+          style={{ top: pos.top + 4, left: 8 }}
           title={`Click to switch to ${paneScales[i] === "linear" ? "Log" : "Linear"}`}
         >
           {(paneScales[i] ?? "linear") === "log" ? "Log" : "Lin"}
