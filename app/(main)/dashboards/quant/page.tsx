@@ -114,10 +114,16 @@ type ModelId = (typeof MODELS)[number]["id"]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtPrice(v: number) {
+function fmtPrice(v: number | null | undefined) {
+  if (v == null || !isFinite(v)) return "—"
   return "$" + v.toLocaleString(undefined, { maximumFractionDigits: 0 })
 }
-function fmtPct(v: number, decimals = 1) {
+function fmtNum(v: number | null | undefined, opts?: Intl.NumberFormatOptions) {
+  if (v == null || !isFinite(v)) return "—"
+  return v.toLocaleString(undefined, opts)
+}
+function fmtPct(v: number | null | undefined, decimals = 1) {
+  if (v == null || !isFinite(v)) return "—"
   return (v >= 0 ? "+" : "") + v.toFixed(decimals) + "%"
 }
 
@@ -339,7 +345,7 @@ export default function QuantPage() {
         return (
           <>
             <StatRow label="Current price" value={fmtPrice(m.current_price)} />
-            <StatRow label="Simulations" value={m.simulations.toLocaleString()} />
+            <StatRow label="Simulations" value={fmtNum(m.simulations)} />
             <StatRow label="Horizon" value={`${m.days} days`} />
             <StatRow label="P(above current)" value={(m.prob_above_current * 100).toFixed(1) + "%"}
               className={m.prob_above_current > 0.5 ? "text-emerald-400" : "text-rose-400"} />
@@ -356,7 +362,7 @@ export default function QuantPage() {
           <>
             <StatRow label="Current price" value={fmtPrice(m.current_price)} />
             <StatRow label="Kalman trend" value={fmtPrice(m.current_trend_value)} />
-            <StatRow label="Slope ($/day)" value={"$" + m.current_slope.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+            <StatRow label="Slope ($/day)" value={"$" + fmtNum(m.current_slope, { maximumFractionDigits: 0 })} />
             <StatRow label="Trend direction" value={m.trend_label}
               className={m.trend_label === "bullish" ? "text-emerald-400" : "text-rose-400"} />
             <StatRow label="Price vs trend"
@@ -405,8 +411,8 @@ export default function QuantPage() {
             <StatRow label="P(up tomorrow)" value={pctUp + "%"} className={cls} />
             <StatRow label="Signal" value={m.signal_label} className={cls} />
             <StatRow label="Test accuracy" value={(m.test_accuracy * 100).toFixed(1) + "%"} />
-            <StatRow label="Training samples" value={m.n_train.toLocaleString()} />
-            <StatRow label="Test samples" value={m.n_test.toLocaleString()} />
+            <StatRow label="Training samples" value={fmtNum(m.n_train)} />
+            <StatRow label="Test samples" value={fmtNum(m.n_test)} />
             <StatRow label="Architecture" value={m.architecture} />
           </>
         )
