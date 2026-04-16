@@ -53,6 +53,10 @@ def _log_returns(prices: pd.Series) -> np.ndarray:
 def run_linear_regression(prices: pd.Series) -> dict:
     """Log-linear OLS trend. Returns trend line, R², current deviation, 30d forecast."""
     log_p = np.log(prices.values)
+    valid = np.isfinite(log_p)
+    if not valid.all():
+        prices = prices.iloc[valid]
+        log_p = log_p[valid]
     x = np.arange(len(log_p), dtype=float)
     n = len(x)
     xm, ym = x.mean(), log_p.mean()
@@ -505,7 +509,7 @@ async def run_all() -> dict:
 
     log.info("Quant: fetching BTC price data…")
     prices = await _get_btc_prices()
-    prices = prices[np.isfinite(prices.values)]  # drop any inf/nan rows
+    prices = prices[np.isfinite(prices.values) & (prices.values > 0)]  # drop inf/nan/zero rows
     log.info("Quant: %d price points, running 7 models…", len(prices))
 
     result: dict = {
