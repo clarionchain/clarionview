@@ -310,7 +310,7 @@ export default function QuantPage() {
         if (!m) return null
         return (
           <>
-            <StatRow label="R²" value={m.r2.toFixed(4)} />
+            <StatRow label="R²" value={m.r2 != null ? m.r2.toFixed(4) : "—"} />
             <StatRow label="Current price" value={fmtPrice(m.current_price)} />
             <StatRow label="Trend price" value={fmtPrice(m.current_trend)} />
             <StatRow
@@ -318,7 +318,7 @@ export default function QuantPage() {
               value={fmtPct(m.current_deviation_pct)}
               className={m.above_trend ? "text-rose-400" : "text-emerald-400"}
             />
-            <StatRow label="Daily trend growth" value={m.daily_growth_pct.toFixed(4) + "%"} />
+            <StatRow label="Daily trend growth" value={m.daily_growth_pct != null ? m.daily_growth_pct.toFixed(4) + "%" : "—"} />
             <StatRow label="30d forecast" value={fmtPrice(m.forecast.at(-1)?.value ?? 0)} />
           </>
         )
@@ -329,12 +329,12 @@ export default function QuantPage() {
         const regCls = m.vol_regime === "elevated" ? "text-rose-400" : m.vol_regime === "low" ? "text-emerald-400" : "text-amber-400"
         return (
           <>
-            <StatRow label="Current vol (ann.)" value={(m.current_vol_annualized * 100).toFixed(1) + "%"} className="text-amber-400" />
-            <StatRow label="Long-run vol" value={(m.long_run_vol_annualized * 100).toFixed(1) + "%"} />
-            <StatRow label="30d vol forecast" value={(m.forecast_30d_vol * 100).toFixed(1) + "%"} />
-            <StatRow label="α (shock)" value={m.alpha.toFixed(4)} />
-            <StatRow label="β (persistence)" value={m.beta.toFixed(4)} />
-            <StatRow label="α+β" value={m.persistence.toFixed(4)} />
+            <StatRow label="Current vol (ann.)" value={m.current_vol_annualized != null ? (m.current_vol_annualized * 100).toFixed(1) + "%" : "—"} className="text-amber-400" />
+            <StatRow label="Long-run vol" value={m.long_run_vol_annualized != null ? (m.long_run_vol_annualized * 100).toFixed(1) + "%" : "—"} />
+            <StatRow label="30d vol forecast" value={m.forecast_30d_vol != null ? (m.forecast_30d_vol * 100).toFixed(1) + "%" : "—"} />
+            <StatRow label="α (shock)" value={m.alpha != null ? m.alpha.toFixed(4) : "—"} />
+            <StatRow label="β (persistence)" value={m.beta != null ? m.beta.toFixed(4) : "—"} />
+            <StatRow label="α+β" value={m.persistence != null ? m.persistence.toFixed(4) : "—"} />
             <StatRow label="Regime" value={m.vol_regime} className={regCls} />
           </>
         )
@@ -347,10 +347,10 @@ export default function QuantPage() {
             <StatRow label="Current price" value={fmtPrice(m.current_price)} />
             <StatRow label="Simulations" value={fmtNum(m.simulations)} />
             <StatRow label="Horizon" value={`${m.days} days`} />
-            <StatRow label="P(above current)" value={(m.prob_above_current * 100).toFixed(1) + "%"}
-              className={m.prob_above_current > 0.5 ? "text-emerald-400" : "text-rose-400"} />
+            <StatRow label="P(above current)" value={m.prob_above_current != null ? (m.prob_above_current * 100).toFixed(1) + "%" : "—"}
+              className={m.prob_above_current != null && m.prob_above_current > 0.5 ? "text-emerald-400" : "text-rose-400"} />
             <StatRow label="Expected return" value={fmtPct(m.expected_return_pct)}
-              className={m.expected_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"} />
+              className={m.expected_return_pct != null && m.expected_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"} />
             <StatRow label="P5 / P50 / P95" value={`${fmtPrice(m.p5_final)} / ${fmtPrice(m.p50_final)} / ${fmtPrice(m.p95_final)}`} />
           </>
         )
@@ -378,7 +378,7 @@ export default function QuantPage() {
         return (
           <>
             <StatRow label="Current regime" value={m.current_regime_label} className={cls} />
-            <StatRow label="Confidence" value={(m.current_regime_probability * 100).toFixed(1) + "%"} />
+            <StatRow label="Confidence" value={m.current_regime_probability != null ? (m.current_regime_probability * 100).toFixed(1) + "%" : "—"} />
             <StatRow label="States" value={`${m.n_states} (Bear / Neutral / Bull)`} />
             <div className="pt-2 text-xs text-muted-foreground/40">
               Green = Bull · Grey = Neutral · Red = Bear
@@ -404,11 +404,11 @@ export default function QuantPage() {
       case "neural_network": {
         const m = data.neural_network
         if (!m) return null
-        const pctUp = (m.current_probability_up * 100).toFixed(1)
+        const pctUp = m.current_probability_up != null ? (m.current_probability_up * 100).toFixed(1) : null
         const cls = m.signal_label === "bullish" ? "text-emerald-400" : m.signal_label === "bearish" ? "text-rose-400" : "text-amber-400"
         return (
           <>
-            <StatRow label="P(up tomorrow)" value={pctUp + "%"} className={cls} />
+            <StatRow label="P(up tomorrow)" value={pctUp != null ? pctUp + "%" : "—"} className={cls} />
             <StatRow label="Signal" value={m.signal_label} className={cls} />
             <StatRow label="Test accuracy" value={(m.test_accuracy * 100).toFixed(1) + "%"} />
             <StatRow label="Training samples" value={fmtNum(m.n_train)} />
@@ -475,7 +475,7 @@ export default function QuantPage() {
                   {data.hmm.current_regime_label} regime
                 </div>
               )}
-              {data.garch && !("error" in data.garch) && (
+              {data.garch && !("error" in data.garch) && data.garch.current_vol_annualized != null && (
                 <div className="text-xs text-muted-foreground/50">
                   Vol: {(data.garch.current_vol_annualized * 100).toFixed(0)}% ann.
                 </div>
