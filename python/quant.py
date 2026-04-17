@@ -482,6 +482,82 @@ def run_neural_network(prices: pd.Series) -> dict:
     }
 
 
+# ── 8. TimesFM (Google Foundation Model) ─────────────────────────────────────
+
+_timesfm_model = None  # lazy-loaded singleton — weights download once to /app/data/hf_cache
+
+
+def _get_timesfm():
+    global _timesfm_model
+    if _timesfm_model is not None:
+        return _timesfm_model
+    import os, timesfm
+    os.environ.setdefault("HF_HOME", "/app/data/hf_cache")
+    log.info("TimesFM: loading model weights (first run downloads ~400 MB)…")
+    _timesfm_model = timesfm.TimesFm(
+        hparams=timesfm.TimesFmHparams(
+            backend="torch",
+            per_core_batch_size=32,
+            horizon_len=128,
+            num_layers=20,
+            use_positional_embedding=False,
+        ),
+        checkpoint=timesfm.TimesFmCheckpoint(
+            huggingface_repo_id="google/timesfm-1.0-200m",
+        ),
+    )
+    log.info("TimesFM: model ready")
+    return _timesfm_model
+
+
+def run_timesfm(prices: pd.Series, horizon: int = 90) -> dict:
+    """Google TimesFM 1.0-200M zero-shot probabilistic 90-day price forecast."""
+    tfm = _get_timesfm()
+
+    context_len = min(512, len(prices))
+    context = [float(v) for v in prices.values[-context_len:]]
+
+    point_forecast, quantile_forecasts = tfm.forecast(
+        inputs=[context],
+        freq=[0],  # 0 = high-frequency (daily)
+    )
+
+    fc_vals = [float(v) for v in point_forecast[0][:horizon]]
+    actual_h = len(fc_vals)
+    last_date = prices.index[-1]
+    future_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(actual_h)]
+
+    cur = float(prices.iloc[-1])
+    fc_final = float(fc_vals[-1])
+
+    # Quantile bands — shape [batch, horizon, n_quantiles]
+    lower: list = []
+    upper: list = []
+    if quantile_forecasts is not None:
+        try:
+            qf = quantile_forecasts[0]  # [horizon, n_quantiles]
+            if hasattr(qf, "tolist"):
+                qf = qf.tolist()
+            n_q = len(qf[0]) if qf else 0
+            if n_q >= 2:
+                lower = [{"time": future_dates[i], "value": round(float(qf[i][0]), 2)} for i in range(actual_h)]
+                upper = [{"time": future_dates[i], "value": round(float(qf[i][-1]), 2)} for i in range(actual_h)]
+        except Exception as e:
+            log.warning("TimesFM quantile parse failed: %s", e)
+
+    return {
+        "price":        _series(prices, tail=180),
+        "forecast":     [{"time": future_dates[i], "value": round(float(fc_vals[i]), 2)} for i in range(actual_h)],
+        "lower":        lower,
+        "upper":        upper,
+        "current_price": round(cur, 2),
+        "forecast_90d":  round(fc_final, 2),
+        "change_pct":    round((fc_final / cur - 1) * 100, 2),
+        "horizon_days":  actual_h,
+        "context_points": context_len,
+    }
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def _clean(obj):
@@ -510,7 +586,7 @@ async def run_all() -> dict:
     log.info("Quant: fetching BTC price data…")
     prices = await _get_btc_prices()
     prices = prices[np.isfinite(prices.values) & (prices.values > 0)]  # drop inf/nan/zero rows
-    log.info("Quant: %d price points, running 7 models…", len(prices))
+    log.info("Quant: %d price points, running 8 models…", len(prices))
 
     result: dict = {
         "generated_at": now.isoformat(),
@@ -527,6 +603,7 @@ async def run_all() -> dict:
         ("hmm",               lambda: run_hmm(prices)),
         ("arima",             lambda: run_arima(prices)),
         ("neural_network",    lambda: run_neural_network(prices)),
+        ("timesfm",           lambda: run_timesfm(prices)),
     ]
 
     for name, fn in MODELS:

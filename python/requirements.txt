@@ -9,3 +9,5 @@ apscheduler==3.10.4
 python-dotenv==1.0.1
 Pillow==10.4.0
 statsmodels==0.14.4
+huggingface_hub>=0.24.0
+timesfm

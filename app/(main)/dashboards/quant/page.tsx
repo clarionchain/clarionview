@@ -54,6 +54,11 @@ interface QuantResult {
     current_probability_up: number; signal_label: string
     test_accuracy: number; n_train: number; n_test: number; architecture: string
   }
+  timesfm?: {
+    price: DataPoint[]; forecast: DataPoint[]; lower: DataPoint[]; upper: DataPoint[]
+    current_price: number; forecast_90d: number; change_pct: number
+    horizon_days: number; context_points: number
+  }
 }
 
 // ── Model metadata ────────────────────────────────────────────────────────────
@@ -107,6 +112,13 @@ const MODELS = [
     category: "Deep Learning",
     icon: Brain,
     desc: "MLP(20→32→1) trained on normalized return windows. Outputs P(next-day return > 0).",
+  },
+  {
+    id: "timesfm",
+    label: "TimesFM",
+    category: "Foundation Model",
+    icon: Sigma,
+    desc: "Google's 200M-parameter time-series foundation model. Zero-shot 90-day forecast using 512 days of context. No training required.",
   },
 ] as const
 
@@ -297,6 +309,16 @@ export default function QuantPage() {
         if (!m) return []
         return [{ type: "line", data: m.signal, color: EMERALD, width: 1 }]
       }
+      case "timesfm": {
+        const m = data.timesfm
+        if (!m) return []
+        return [
+          { type: "line", data: m.price,    color: ORANGE,        width: 1 },
+          { type: "line", data: m.upper,    color: CYAN + "40",   width: 1 },
+          { type: "line", data: m.forecast, color: CYAN,          width: 2 },
+          { type: "line", data: m.lower,    color: CYAN + "40",   width: 1 },
+        ]
+      }
       default:
         return []
     }
@@ -414,6 +436,25 @@ export default function QuantPage() {
             <StatRow label="Training samples" value={fmtNum(m.n_train)} />
             <StatRow label="Test samples" value={fmtNum(m.n_test)} />
             <StatRow label="Architecture" value={m.architecture} />
+          </>
+        )
+      }
+      case "timesfm": {
+        const m = data.timesfm
+        if (!m) return null
+        const dir = m.change_pct != null && m.change_pct >= 0 ? "text-emerald-400" : "text-rose-400"
+        return (
+          <>
+            <StatRow label="Current price" value={fmtPrice(m.current_price)} />
+            <StatRow label="90d forecast" value={fmtPrice(m.forecast_90d)} />
+            <StatRow label="Expected change" value={fmtPct(m.change_pct)} className={dir} />
+            <StatRow label="Horizon" value={`${m.horizon_days} days`} />
+            <StatRow label="Context window" value={`${m.context_points} days`} />
+            <StatRow label="Model" value="timesfm-1.0-200M" />
+            <StatRow label="Source" value="Google Research" />
+            <div className="pt-2 text-xs text-muted-foreground/40">
+              Zero-shot · no fine-tuning
+            </div>
           </>
         )
       }
@@ -581,6 +622,13 @@ export default function QuantPage() {
                 {selected === "neural_network" && (
                   <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40">
                     <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-emerald-400" />P(up) signal — 0.5 = neutral</span>
+                  </div>
+                )}
+                {selected === "timesfm" && (
+                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40">
+                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-orange-400" />Price</span>
+                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400" />Forecast (90d)</span>
+                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400/40" />Quantile band</span>
                   </div>
                 )}
               </div>
