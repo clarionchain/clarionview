@@ -482,81 +482,65 @@ def run_neural_network(prices: pd.Series) -> dict:
     }
 
 
-# ── 8. TimesFM (Google Foundation Model) ─────────────────────────────────────
+# ── 8. Chronos (Amazon Foundation Model) ─────────────────────────────────────
 
-_timesfm_model = None  # lazy-loaded singleton — weights download once to /app/data/hf_cache
+_chronos_pipeline = None  # lazy-loaded singleton — weights download once to /app/data/hf_cache
 
 
-def _get_timesfm():
-    global _timesfm_model
-    if _timesfm_model is not None:
-        return _timesfm_model
-    import os, timesfm
+def _get_chronos():
+    global _chronos_pipeline
+    if _chronos_pipeline is not None:
+        return _chronos_pipeline
+    import os
+    import torch
+    from chronos import ChronosPipeline
     os.environ.setdefault("HF_HOME", "/app/data/hf_cache")
-    log.info("TimesFM: loading model weights (first run downloads ~400 MB)…")
-    _timesfm_model = timesfm.TimesFm(
-        hparams=timesfm.TimesFmHparams(
-            backend="cpu",
-            per_core_batch_size=32,
-            horizon_len=128,
-            context_len=512,
-            input_patch_len=32,
-            output_patch_len=128,
-            num_layers=20,
-            model_dims=1280,
-        ),
-        checkpoint=timesfm.TimesFmCheckpoint(
-            huggingface_repo_id="google/timesfm-1.0-200m",
-        ),
+    log.info("Chronos: loading model weights (first run downloads ~700 MB)…")
+    _chronos_pipeline = ChronosPipeline.from_pretrained(
+        "amazon/chronos-t5-large",
+        device_map="cpu",
+        torch_dtype=torch.float32,
     )
-    log.info("TimesFM: model ready")
-    return _timesfm_model
+    log.info("Chronos: model ready")
+    return _chronos_pipeline
 
 
-def run_timesfm(prices: pd.Series, horizon: int = 90) -> dict:
-    """Google TimesFM 1.0-200M zero-shot probabilistic 90-day price forecast."""
-    tfm = _get_timesfm()
+def run_chronos(prices: pd.Series, horizon: int = 90, num_samples: int = 20) -> dict:
+    """Amazon Chronos-T5-Large zero-shot probabilistic 90-day price forecast."""
+    import torch
+
+    pipeline = _get_chronos()
 
     context_len = min(512, len(prices))
-    context = [float(v) for v in prices.values[-context_len:]]
+    context_vals = prices.values[-context_len:].astype(float)
+    context = torch.tensor(context_vals, dtype=torch.float32)
 
-    point_forecast, quantile_forecasts = tfm.forecast(
-        inputs=[context],
-        freq=[0],  # 0 = high-frequency (daily)
-    )
+    forecast = pipeline.predict(
+        context=context,
+        prediction_length=horizon,
+        num_samples=num_samples,
+    )  # shape: (num_samples, prediction_length)
 
-    fc_vals = [float(v) for v in point_forecast[0][:horizon]]
-    actual_h = len(fc_vals)
+    fc_np = forecast.numpy()  # (num_samples, horizon)
+    median = np.median(fc_np, axis=0)
+    lower  = np.quantile(fc_np, 0.1, axis=0)
+    upper  = np.quantile(fc_np, 0.9, axis=0)
+
     last_date = prices.index[-1]
-    future_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(actual_h)]
+    future_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(horizon)]
 
     cur = float(prices.iloc[-1])
-    fc_final = float(fc_vals[-1])
-
-    # Quantile bands — shape [batch, horizon, n_quantiles]
-    lower: list = []
-    upper: list = []
-    if quantile_forecasts is not None:
-        try:
-            qf = quantile_forecasts[0]  # [horizon, n_quantiles]
-            if hasattr(qf, "tolist"):
-                qf = qf.tolist()
-            n_q = len(qf[0]) if qf else 0
-            if n_q >= 2:
-                lower = [{"time": future_dates[i], "value": round(float(qf[i][0]), 2)} for i in range(actual_h)]
-                upper = [{"time": future_dates[i], "value": round(float(qf[i][-1]), 2)} for i in range(actual_h)]
-        except Exception as e:
-            log.warning("TimesFM quantile parse failed: %s", e)
+    fc_final = float(median[-1])
 
     return {
-        "price":        _series(prices, tail=180),
-        "forecast":     [{"time": future_dates[i], "value": round(float(fc_vals[i]), 2)} for i in range(actual_h)],
-        "lower":        lower,
-        "upper":        upper,
+        "price":         _series(prices, tail=180),
+        "forecast":      [{"time": future_dates[i], "value": round(float(median[i]), 2)} for i in range(horizon)],
+        "lower":         [{"time": future_dates[i], "value": round(float(lower[i]), 2)} for i in range(horizon)],
+        "upper":         [{"time": future_dates[i], "value": round(float(upper[i]), 2)} for i in range(horizon)],
         "current_price": round(cur, 2),
         "forecast_90d":  round(fc_final, 2),
         "change_pct":    round((fc_final / cur - 1) * 100, 2),
-        "horizon_days":  actual_h,
+        "horizon_days":  horizon,
         "context_points": context_len,
     }
 
@@ -606,7 +590,7 @@ async def run_all() -> dict:
         ("hmm",               lambda: run_hmm(prices)),
         ("arima",             lambda: run_arima(prices)),
         ("neural_network",    lambda: run_neural_network(prices)),
-        ("timesfm",           lambda: run_timesfm(prices)),
+        ("timesfm",           lambda: run_chronos(prices)),
     ]
 
     for name, fn in MODELS:

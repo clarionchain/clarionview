@@ -115,10 +115,10 @@ const MODELS = [
   },
   {
     id: "timesfm",
-    label: "TimesFM",
+    label: "Chronos",
     category: "Foundation Model",
     icon: Sigma,
-    desc: "Google's 200M-parameter time-series foundation model. Zero-shot 90-day forecast using 512 days of context. No training required.",
+    desc: "Amazon's Chronos-T5-Large foundation model. Zero-shot probabilistic 90-day forecast with 10th/90th percentile confidence bands. No training required.",
   },
 ] as const
 
@@ -450,8 +450,8 @@ export default function QuantPage() {
             <StatRow label="Expected change" value={fmtPct(m.change_pct)} className={dir} />
             <StatRow label="Horizon" value={`${m.horizon_days} days`} />
             <StatRow label="Context window" value={`${m.context_points} days`} />
-            <StatRow label="Model" value="timesfm-1.0-200M" />
-            <StatRow label="Source" value="Google Research" />
+            <StatRow label="Model" value="chronos-t5-large" />
+            <StatRow label="Source" value="Amazon Research" />
             <div className="pt-2 text-xs text-muted-foreground/40">
               Zero-shot · no fine-tuning
             </div>
