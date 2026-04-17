@@ -496,11 +496,14 @@ def _get_timesfm():
     log.info("TimesFM: loading model weights (first run downloads ~400 MB)…")
     _timesfm_model = timesfm.TimesFm(
         hparams=timesfm.TimesFmHparams(
-            backend="torch",
+            backend="cpu",
             per_core_batch_size=32,
             horizon_len=128,
+            context_len=512,
+            input_patch_len=32,
+            output_patch_len=128,
             num_layers=20,
-            use_positional_embedding=False,
+            model_dims=1280,
         ),
         checkpoint=timesfm.TimesFmCheckpoint(
             huggingface_repo_id="google/timesfm-1.0-200m",
