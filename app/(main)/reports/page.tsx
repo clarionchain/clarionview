@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
+import dynamic from "next/dynamic"
 import {
   FileText, Loader2, RefreshCw, AlertCircle,
   ChevronLeft, ChevronRight, Zap, TrendingUp, TrendingDown, Minus, Download,
@@ -64,6 +65,8 @@ interface ReportFull extends ReportMeta {
   data_snapshot: string
 }
 
+type PricePoint = { time: string; value: number }
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatDate(dateStr: string) {
@@ -100,48 +103,89 @@ function changeColor(val: number | null | undefined): string {
   return val > 0 ? "text-emerald-400" : val < 0 ? "text-rose-400" : "text-muted-foreground/50"
 }
 
-// ─── RSI Gauge ───────────────────────────────────────────────────────────────
+// ─── Price Chart (lightweight-charts, client-only) ────────────────────────────
 
-function RsiGauge({ rsi }: { rsi: number }) {
-  // Semicircle arc from 180° (left) to 0° (right), value 0–100
-  const pct = Math.min(1, Math.max(0, rsi / 100))
-  const angle = 180 - pct * 180          // degrees from left (180°) to right (0°)
-  const rad = (angle * Math.PI) / 180
-  const cx = 44, cy = 44, r = 34
-  const nx = cx + r * Math.cos(rad)
-  const ny = cy - r * Math.sin(rad)
+const PriceChart = dynamic(
+  async () => {
+    const { createChart, AreaSeries, ColorType, CrosshairMode, LineStyle } = await import("lightweight-charts")
+    type Time = import("lightweight-charts").Time
 
-  // Track colors: green 0-30, yellow 30-70, red 70-100
-  const needleColor = rsi >= 70 ? "#f87171" : rsi <= 30 ? "#34d399" : "#facc15"
+    function Chart({ data }: { data: PricePoint[] }) {
+      const containerRef = useRef<HTMLDivElement>(null)
 
-  return (
-    <svg width="88" height="52" viewBox="0 0 88 52" className="overflow-visible">
-      {/* Background arc */}
-      <path d="M10,44 A34,34 0 0,1 78,44" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="6" strokeLinecap="round" />
-      {/* Green zone 0-30 */}
-      <path d="M10,44 A34,34 0 0,1 27.4,18.6" fill="none" stroke="#34d399" strokeWidth="6" strokeLinecap="round" opacity="0.35" />
-      {/* Yellow zone 30-70 */}
-      <path d="M27.4,18.6 A34,34 0 0,1 60.6,18.6" fill="none" stroke="#facc15" strokeWidth="6" strokeLinecap="round" opacity="0.35" />
-      {/* Red zone 70-100 */}
-      <path d="M60.6,18.6 A34,34 0 0,1 78,44" fill="none" stroke="#f87171" strokeWidth="6" strokeLinecap="round" opacity="0.35" />
-      {/* Needle */}
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={needleColor} strokeWidth="2.5" strokeLinecap="round" />
-      <circle cx={cx} cy={cy} r="3" fill={needleColor} />
-      {/* Labels */}
-      <text x="6" y="52" fontSize="8" fill="rgba(255,255,255,0.25)" textAnchor="middle">0</text>
-      <text x="44" y="10" fontSize="8" fill="rgba(255,255,255,0.25)" textAnchor="middle">50</text>
-      <text x="82" y="52" fontSize="8" fill="rgba(255,255,255,0.25)" textAnchor="middle">100</text>
-    </svg>
-  )
-}
+      useEffect(() => {
+        if (!containerRef.current || !data.length) return
 
-// ─── Price Hero ───────────────────────────────────────────────────────────────
+        const el = containerRef.current
+        const chart = createChart(el, {
+          width: el.clientWidth,
+          height: el.clientHeight,
+          layout: {
+            background: { type: ColorType.Solid, color: "transparent" },
+            textColor: "rgba(156,163,175,0.6)",
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 10,
+          },
+          grid: {
+            vertLines: { color: "rgba(255,255,255,0.03)" },
+            horzLines: { color: "rgba(255,255,255,0.03)" },
+          },
+          rightPriceScale: {
+            borderColor: "rgba(255,255,255,0.06)",
+            scaleMargins: { top: 0.1, bottom: 0.06 },
+          },
+          timeScale: {
+            borderColor: "rgba(255,255,255,0.06)",
+            rightOffset: 4,
+          },
+          crosshair: {
+            mode: CrosshairMode.Normal,
+            vertLine: { color: "rgba(255,255,255,0.15)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#1f2937" },
+            horzLine: { color: "rgba(255,255,255,0.15)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#1f2937" },
+          },
+          handleScroll: { mouseWheel: true, pressedMouseMove: true },
+          handleScale: { mouseWheel: true, pinch: true },
+        })
 
-function PriceHero({ p }: { p: PriceBlock }) {
+        const series = chart.addSeries(AreaSeries, {
+          lineColor: "#38bdf8",
+          topColor: "rgba(56,189,248,0.18)",
+          bottomColor: "rgba(56,189,248,0.01)",
+          lineWidth: 1.5,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 4,
+          priceLineVisible: false,
+          lastValueVisible: true,
+        })
+
+        // Show last 365 days
+        const tail = data.slice(-365)
+        series.setData(tail.map((d) => ({ time: d.time as Time, value: d.value })))
+        chart.timeScale().fitContent()
+
+        const observer = new ResizeObserver(() => {
+          if (el) chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })
+        })
+        observer.observe(el)
+
+        return () => { observer.disconnect(); chart.remove() }
+      }, [data])
+
+      return <div ref={containerRef} className="w-full h-full" />
+    }
+
+    return Chart
+  },
+  { ssr: false, loading: () => <div className="w-full h-full flex items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground/30" /></div> }
+)
+
+// ─── Price Card ───────────────────────────────────────────────────────────────
+
+function PriceCard({ p, chartData }: { p: PriceBlock; chartData: PricePoint[] }) {
   if (!p.value) return null
   const price = p.value.toLocaleString(undefined, { maximumFractionDigits: 0 })
 
-  function ChangeChip({ label, val }: { label: string; val: number | null }) {
+  function Chip({ label, val }: { label: string; val: number | null }) {
     if (val == null) return null
     const Icon = val > 0 ? TrendingUp : val < 0 ? TrendingDown : Minus
     return (
@@ -153,31 +197,44 @@ function PriceHero({ p }: { p: PriceBlock }) {
     )
   }
 
+  const rsiColor = p.rsi == null ? "text-foreground/60" : p.rsi >= 70 ? "text-rose-400" : p.rsi <= 30 ? "text-emerald-400" : "text-amber-400"
+
   return (
-    <div className="rounded-xl border border-border/25 bg-gradient-to-br from-card/80 to-card/30 p-5 flex items-center justify-between gap-6 flex-wrap">
-      <div>
-        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-semibold mb-1">BTC / USD</div>
-        <div className="text-4xl font-bold tabular-nums text-foreground">${price}</div>
-        <div className="flex items-center gap-4 mt-2 flex-wrap">
-          <ChangeChip label="24h" val={p.change_1d} />
-          <ChangeChip label="7d" val={p.change_7d} />
-          <ChangeChip label="30d" val={p.change_30d} />
+    <div className="rounded-xl border border-border/25 bg-card/40 overflow-hidden">
+      {/* Stats bar */}
+      <div className="flex items-center justify-between gap-6 px-5 pt-4 pb-3 flex-wrap">
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground/30 font-semibold mb-0.5">BTC / USD</div>
+          <div className="text-3xl font-bold tabular-nums">${price}</div>
+        </div>
+        <div className="flex items-center gap-4 flex-wrap">
+          <Chip label="24h" val={p.change_1d} />
+          <Chip label="7d" val={p.change_7d} />
+          <Chip label="30d" val={p.change_30d} />
           {p.vs_200dma_pct != null && (
             <div className={cn("text-xs font-medium", changeColor(p.vs_200dma_pct))}>
               <span className="text-muted-foreground/40 text-[10px] mr-1">vs 200DMA</span>
               {p.vs_200dma_pct > 0 ? "+" : ""}{p.vs_200dma_pct}%
             </div>
           )}
+          {p.rsi != null && (
+            <div className="text-xs font-medium">
+              <span className="text-muted-foreground/40 text-[10px] mr-1">RSI</span>
+              <span className={rsiColor}>{p.rsi}</span>
+            </div>
+          )}
         </div>
       </div>
-      {p.rsi != null && (
-        <div className="flex flex-col items-center gap-0.5 shrink-0">
-          <RsiGauge rsi={p.rsi} />
-          <div className="text-[10px] text-muted-foreground/40 -mt-1">
-            RSI(14) <span className={cn("font-semibold", p.rsi >= 70 ? "text-rose-400" : p.rsi <= 30 ? "text-emerald-400" : "text-amber-400")}>{p.rsi}</span>
+      {/* Chart */}
+      <div className="h-52 px-1 pb-1">
+        {chartData.length > 0 ? (
+          <PriceChart data={chartData} />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground/20" />
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
@@ -226,13 +283,15 @@ function EtfStrip({ etfs }: { etfs: EtfRow[] }) {
   if (!etfs.length) return null
   return (
     <div className="rounded-xl border border-border/20 bg-card/30 p-4">
-      <div className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-semibold mb-3">ETF & Equities</div>
+      <div className="text-[10px] uppercase tracking-widest text-muted-foreground/40 font-semibold mb-3">ETF &amp; Equities</div>
       <div className="flex flex-wrap gap-3">
         {etfs.map((e) => (
           <div key={e.ticker} className="flex items-center gap-2 bg-card/50 border border-border/20 rounded-lg px-3 py-2 min-w-[90px]">
             <div>
               <div className="text-xs font-semibold text-foreground/80">{e.ticker}</div>
-              <div className="text-[11px] text-muted-foreground/50 tabular-nums">${e.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div className="text-[11px] text-muted-foreground/50 tabular-nums">
+                ${e.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
             </div>
             {e.change_1d != null && (
               <div className={cn("text-xs font-medium ml-auto tabular-nums", changeColor(e.change_1d))}>
@@ -246,9 +305,9 @@ function EtfStrip({ etfs }: { etfs: EtfRow[] }) {
   )
 }
 
-// ─── Infographic ─────────────────────────────────────────────────────────────
+// ─── Full report layout ───────────────────────────────────────────────────────
 
-function ReportInfographic({ report }: { report: ReportFull }) {
+function ReportView({ report, chartData }: { report: ReportFull; chartData: PricePoint[] }) {
   const s = report.structured
   const narrativeUnavailable = report.narrative?.startsWith("*LLM narrative unavailable")
   const infographicUrl = withBase(`/api/reports/${report.date}/infographic.png`)
@@ -279,10 +338,10 @@ function ReportInfographic({ report }: { report: ReportFull }) {
         </div>
       </div>
 
-      {/* Price hero */}
-      {s?.price && <PriceHero p={s.price} />}
+      {/* Interactive price chart */}
+      {s?.price && <PriceCard p={s.price} chartData={chartData} />}
 
-      {/* Metric sections — 2 col on large screens */}
+      {/* Metric sections */}
       {s && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <MetricSection title="On-Chain Valuation" metrics={s.onchain} />
@@ -318,6 +377,7 @@ export default function ReportsPage() {
   const [report, setReport] = useState<ReportFull | null>(null)
   const [reportLoading, setReportLoading] = useState(false)
   const [triggering, setTriggering] = useState(false)
+  const [chartData, setChartData] = useState<PricePoint[]>([])
 
   const loadList = useCallback(async () => {
     setListLoading(true)
@@ -336,6 +396,14 @@ export default function ReportsPage() {
     } finally {
       setListLoading(false)
     }
+  }, [])
+
+  // Load BTC price history once for the chart
+  useEffect(() => {
+    fetch(withBase("/api/data/yf?ticker=BTC-USD"), { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.data) setChartData(d.data) })
+      .catch(() => {})
   }, [])
 
   useEffect(() => { loadList() }, [loadList])
@@ -378,7 +446,7 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-5">
-      {/* Header bar */}
+      {/* Nav bar */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           {reports.length > 1 && (
@@ -434,7 +502,7 @@ export default function ReportsPage() {
           <Loader2 className="h-4 w-4 animate-spin" />Loading report...
         </div>
       ) : report ? (
-        <ReportInfographic report={report} />
+        <ReportView report={report} chartData={chartData} />
       ) : null}
     </div>
   )
