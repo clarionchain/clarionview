@@ -46,6 +46,7 @@ const DASHBOARDS = [
 ]
 
 const INSIGHTS_ITEMS = [
+  { id: "today",    label: "Today",          href: "/insights",            icon: Sparkles },
   { id: "summary",  label: "Daily Summary",  href: "/dashboards/insights", icon: Sparkles },
   { id: "reports",  label: "Reports",        href: "/reports",             icon: FileText },
   { id: "metrics",  label: "Metrics",        href: "/dashboards/metrics",  icon: BarChart2 },

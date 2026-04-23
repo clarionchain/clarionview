@@ -151,7 +151,7 @@ const PriceChart = dynamic(
           lineColor: "#38bdf8",
           topColor: "rgba(56,189,248,0.18)",
           bottomColor: "rgba(56,189,248,0.01)",
-          lineWidth: 1.5,
+          lineWidth: 2,
           crosshairMarkerVisible: true,
           crosshairMarkerRadius: 4,
           priceLineVisible: false,

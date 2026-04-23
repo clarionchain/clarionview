@@ -1,155 +1,15 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import {
-  FlaskConical, Loader2, RefreshCw, AlertCircle, TrendingUp, TrendingDown,
-  Activity, Brain, BarChart2, GitBranch, Waves, Sigma, Network,
-} from "lucide-react"
+import { FlaskConical, Loader2, RefreshCw, AlertCircle } from "lucide-react"
 import { withBase } from "@/lib/base-path"
 import { cn } from "@/lib/utils"
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface DataPoint { time: string; value: number; color?: string }
-
-interface QuantResult {
-  generated_at: string
-  price_current: number
-  price_date: string
-  data_points: number
-  linear_regression?: {
-    price: DataPoint[]; trend: DataPoint[]; forecast: DataPoint[]
-    r2: number; daily_growth_pct: number; current_deviation_pct: number
-    current_price: number; current_trend: number; above_trend: boolean
-  }
-  garch?: {
-    volatility: DataPoint[]
-    current_vol_annualized: number; long_run_vol_annualized: number
-    forecast_30d_vol: number; alpha: number; beta: number
-    persistence: number; vol_regime: string
-  }
-  monte_carlo?: {
-    current_price: number; days: number; simulations: number
-    percentiles: Record<string, DataPoint[]>
-    prob_above_current: number; expected_return_pct: number
-    p5_final: number; p50_final: number; p95_final: number
-  }
-  kalman?: {
-    price: DataPoint[]; trend: DataPoint[]
-    current_trend_value: number; current_slope: number
-    trend_label: string; current_price: number
-  }
-  hmm?: {
-    regimes: (DataPoint & { state: number })[]
-    current_regime: number; current_regime_label: string
-    current_regime_class: string; current_regime_probability: number
-    n_states: number
-  }
-  arima?: {
-    price: DataPoint[]; forecast: DataPoint[]; lower: DataPoint[]; upper: DataPoint[]
-    steps: number; current_price: number; forecast_14d: number; change_pct: number
-  }
-  neural_network?: {
-    signal: DataPoint[]
-    current_probability_up: number; signal_label: string
-    test_accuracy: number; n_train: number; n_test: number; architecture: string
-  }
-  timesfm?: {
-    price: DataPoint[]; forecast: DataPoint[]; lower: DataPoint[]; upper: DataPoint[]
-    current_price: number; forecast_90d: number; change_pct: number
-    horizon_days: number; context_points: number
-  }
-}
-
-// ── Model metadata ────────────────────────────────────────────────────────────
-
-const MODELS = [
-  {
-    id: "linear_regression",
-    label: "Linear Regression",
-    category: "Price Modeling",
-    icon: TrendingUp,
-    desc: "Log-linear OLS trend line. Shows where price sits relative to its long-run trajectory.",
-  },
-  {
-    id: "garch",
-    label: "GARCH(1,1)",
-    category: "Volatility Modeling",
-    icon: Activity,
-    desc: "Conditional heteroskedasticity model. Captures volatility clustering and forecasts risk.",
-  },
-  {
-    id: "monte_carlo",
-    label: "Monte Carlo",
-    category: "Scenario Simulation",
-    icon: GitBranch,
-    desc: "500 GBM price paths over 90 days. Models uncertainty and estimates return distribution.",
-  },
-  {
-    id: "kalman",
-    label: "Kalman Filter",
-    category: "Signal Extraction",
-    icon: Waves,
-    desc: "Adaptive trend estimator. Continuously updates hidden trend state from noisy price data.",
-  },
-  {
-    id: "hmm",
-    label: "Hidden Markov",
-    category: "Regime Switching",
-    icon: Network,
-    desc: "3-state Gaussian HMM. Infers unobservable bull/neutral/bear market regimes.",
-  },
-  {
-    id: "arima",
-    label: "ARIMA(2,1,2)",
-    category: "Time Series",
-    icon: BarChart2,
-    desc: "Autoregressive integrated moving-average model with 14-day price forecast and 80% CI.",
-  },
-  {
-    id: "neural_network",
-    label: "Neural Network",
-    category: "Deep Learning",
-    icon: Brain,
-    desc: "MLP(20→32→1) trained on normalized return windows. Outputs P(next-day return > 0).",
-  },
-  {
-    id: "timesfm",
-    label: "Chronos",
-    category: "Foundation Model",
-    icon: Sigma,
-    desc: "Amazon's Chronos-T5-Large foundation model. Zero-shot probabilistic 90-day forecast with 10th/90th percentile confidence bands. No training required.",
-  },
-] as const
-
-type ModelId = (typeof MODELS)[number]["id"]
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fmtPrice(v: number | null | undefined) {
-  if (v == null || !isFinite(v)) return "—"
-  return "$" + v.toLocaleString(undefined, { maximumFractionDigits: 0 })
-}
-function fmtNum(v: number | null | undefined, opts?: Intl.NumberFormatOptions) {
-  if (v == null || !isFinite(v)) return "—"
-  return v.toLocaleString(undefined, opts)
-}
-function fmtPct(v: number | null | undefined, decimals = 1) {
-  if (v == null || !isFinite(v)) return "—"
-  return (v >= 0 ? "+" : "") + v.toFixed(decimals) + "%"
-}
-
-function regimeColor(cls: string) {
-  if (cls === "bullish") return "text-emerald-400"
-  if (cls === "bearish") return "text-rose-400"
-  return "text-amber-400"
-}
+import {
+  MODEL_SPECS, getSpec, regimeColor, fmtPrice,
+  type ChartSeries, type ModelId, type QuantResult, type StatRow as StatRowSpec,
+} from "@/lib/quant-models"
 
 // ── Mini chart using lightweight-charts ──────────────────────────────────────
-
-type ChartSeries =
-  | { type: "line"; data: DataPoint[]; color: string; width?: 1 | 2 | 3 | 4 }
-  | { type: "histogram"; data: DataPoint[]; color?: string }
 
 function MiniChart({ series, height = 110 }: { series: ChartSeries[]; height?: number }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -201,13 +61,13 @@ function MiniChart({ series, height = 110 }: { series: ChartSeries[]; height?: n
   return <div ref={ref} className="w-full" style={{ height }} />
 }
 
-// ── Model stat cards ──────────────────────────────────────────────────────────
+// ── Stat row ──────────────────────────────────────────────────────────────────
 
-function StatRow({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
+function StatRow({ row }: { row: StatRowSpec }) {
   return (
     <div className="flex items-center justify-between text-xs">
-      <span className="text-muted-foreground/50">{label}</span>
-      <span className={cn("font-mono font-medium", className)}>{value}</span>
+      <span className="text-muted-foreground/50">{row.label}</span>
+      <span className={cn("font-mono font-medium", row.className)}>{row.value}</span>
     </div>
   )
 }
@@ -238,233 +98,17 @@ export default function QuantPage() {
 
   useEffect(() => { load() }, [load])
 
-  // ── Chart series builders ─────────────────────────────────────────────────
-
-  function buildSeries(id: ModelId): ChartSeries[] {
-    if (!data) return []
-    const ORANGE = "#f7931a"
-    const CYAN = "#22d3ee"
-    const EMERALD = "#34d399"
-    const ROSE = "#fb4b4b"
-    const AMBER = "#fbbf24"
-    const MUTED = "#78829680"
-
-    switch (id) {
-      case "linear_regression": {
-        const m = data.linear_regression
-        if (!m) return []
-        return [
-          { type: "line", data: m.price, color: ORANGE, width: 1 },
-          { type: "line", data: m.trend, color: CYAN, width: 1 },
-          { type: "line", data: m.forecast, color: CYAN + "80", width: 1 },
-        ]
-      }
-      case "garch": {
-        const m = data.garch
-        if (!m) return []
-        return [{ type: "line", data: m.volatility, color: AMBER, width: 1 }]
-      }
-      case "monte_carlo": {
-        const m = data.monte_carlo
-        if (!m) return []
-        return [
-          { type: "line", data: m.percentiles.p95, color: ROSE + "60", width: 1 },
-          { type: "line", data: m.percentiles.p75, color: ROSE + "90", width: 1 },
-          { type: "line", data: m.percentiles.p50, color: ORANGE, width: 2 },
-          { type: "line", data: m.percentiles.p25, color: EMERALD + "90", width: 1 },
-          { type: "line", data: m.percentiles.p5, color: EMERALD + "60", width: 1 },
-        ]
-      }
-      case "kalman": {
-        const m = data.kalman
-        if (!m) return []
-        return [
-          { type: "line", data: m.price, color: ORANGE, width: 1 },
-          { type: "line", data: m.trend, color: CYAN, width: 2 },
-        ]
-      }
-      case "hmm": {
-        const m = data.hmm
-        if (!m) return []
-        // Show regime as colored histogram bars (value=1, color by state)
-        const bars = m.regimes.map((pt) => ({
-          time: pt.time,
-          value: 1,
-          color: pt.state === 2 ? EMERALD + "80" : pt.state === 0 ? ROSE + "80" : MUTED,
-        }))
-        return [{ type: "histogram", data: bars }]
-      }
-      case "arima": {
-        const m = data.arima
-        if (!m) return []
-        return [
-          { type: "line", data: m.price, color: ORANGE, width: 1 },
-          { type: "line", data: m.upper, color: CYAN + "50", width: 1 },
-          { type: "line", data: m.forecast, color: CYAN, width: 2 },
-          { type: "line", data: m.lower, color: CYAN + "50", width: 1 },
-        ]
-      }
-      case "neural_network": {
-        const m = data.neural_network
-        if (!m) return []
-        return [{ type: "line", data: m.signal, color: EMERALD, width: 1 }]
-      }
-      case "timesfm": {
-        const m = data.timesfm
-        if (!m) return []
-        return [
-          { type: "line", data: m.price,    color: ORANGE,        width: 1 },
-          { type: "line", data: m.upper,    color: CYAN + "40",   width: 1 },
-          { type: "line", data: m.forecast, color: CYAN,          width: 2 },
-          { type: "line", data: m.lower,    color: CYAN + "40",   width: 1 },
-        ]
-      }
-      default:
-        return []
-    }
-  }
-
-  function renderStats(id: ModelId) {
-    if (!data) return null
-    switch (id) {
-      case "linear_regression": {
-        const m = data.linear_regression
-        if (!m) return null
-        return (
-          <>
-            <StatRow label="R²" value={m.r2 != null ? m.r2.toFixed(4) : "—"} />
-            <StatRow label="Current price" value={fmtPrice(m.current_price)} />
-            <StatRow label="Trend price" value={fmtPrice(m.current_trend)} />
-            <StatRow
-              label="Deviation"
-              value={fmtPct(m.current_deviation_pct)}
-              className={m.above_trend ? "text-rose-400" : "text-emerald-400"}
-            />
-            <StatRow label="Daily trend growth" value={m.daily_growth_pct != null ? m.daily_growth_pct.toFixed(4) + "%" : "—"} />
-            <StatRow label="30d forecast" value={fmtPrice(m.forecast.at(-1)?.value ?? 0)} />
-          </>
-        )
-      }
-      case "garch": {
-        const m = data.garch
-        if (!m) return null
-        const regCls = m.vol_regime === "elevated" ? "text-rose-400" : m.vol_regime === "low" ? "text-emerald-400" : "text-amber-400"
-        return (
-          <>
-            <StatRow label="Current vol (ann.)" value={m.current_vol_annualized != null ? (m.current_vol_annualized * 100).toFixed(1) + "%" : "—"} className="text-amber-400" />
-            <StatRow label="Long-run vol" value={m.long_run_vol_annualized != null ? (m.long_run_vol_annualized * 100).toFixed(1) + "%" : "—"} />
-            <StatRow label="30d vol forecast" value={m.forecast_30d_vol != null ? (m.forecast_30d_vol * 100).toFixed(1) + "%" : "—"} />
-            <StatRow label="α (shock)" value={m.alpha != null ? m.alpha.toFixed(4) : "—"} />
-            <StatRow label="β (persistence)" value={m.beta != null ? m.beta.toFixed(4) : "—"} />
-            <StatRow label="α+β" value={m.persistence != null ? m.persistence.toFixed(4) : "—"} />
-            <StatRow label="Regime" value={m.vol_regime} className={regCls} />
-          </>
-        )
-      }
-      case "monte_carlo": {
-        const m = data.monte_carlo
-        if (!m) return null
-        return (
-          <>
-            <StatRow label="Current price" value={fmtPrice(m.current_price)} />
-            <StatRow label="Simulations" value={fmtNum(m.simulations)} />
-            <StatRow label="Horizon" value={`${m.days} days`} />
-            <StatRow label="P(above current)" value={m.prob_above_current != null ? (m.prob_above_current * 100).toFixed(1) + "%" : "—"}
-              className={m.prob_above_current != null && m.prob_above_current > 0.5 ? "text-emerald-400" : "text-rose-400"} />
-            <StatRow label="Expected return" value={fmtPct(m.expected_return_pct)}
-              className={m.expected_return_pct != null && m.expected_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"} />
-            <StatRow label="P5 / P50 / P95" value={`${fmtPrice(m.p5_final)} / ${fmtPrice(m.p50_final)} / ${fmtPrice(m.p95_final)}`} />
-          </>
-        )
-      }
-      case "kalman": {
-        const m = data.kalman
-        if (!m) return null
-        return (
-          <>
-            <StatRow label="Current price" value={fmtPrice(m.current_price)} />
-            <StatRow label="Kalman trend" value={fmtPrice(m.current_trend_value)} />
-            <StatRow label="Slope ($/day)" value={"$" + fmtNum(m.current_slope, { maximumFractionDigits: 0 })} />
-            <StatRow label="Trend direction" value={m.trend_label}
-              className={m.trend_label === "bullish" ? "text-emerald-400" : "text-rose-400"} />
-            <StatRow label="Price vs trend"
-              value={fmtPct((m.current_price / m.current_trend_value - 1) * 100)}
-              className={m.current_price > m.current_trend_value ? "text-rose-400" : "text-emerald-400"} />
-          </>
-        )
-      }
-      case "hmm": {
-        const m = data.hmm
-        if (!m) return null
-        const cls = regimeColor(m.current_regime_class)
-        return (
-          <>
-            <StatRow label="Current regime" value={m.current_regime_label} className={cls} />
-            <StatRow label="Confidence" value={m.current_regime_probability != null ? (m.current_regime_probability * 100).toFixed(1) + "%" : "—"} />
-            <StatRow label="States" value={`${m.n_states} (Bear / Neutral / Bull)`} />
-            <div className="pt-2 text-xs text-muted-foreground/40">
-              Green = Bull · Grey = Neutral · Red = Bear
-            </div>
-          </>
-        )
-      }
-      case "arima": {
-        const m = data.arima
-        if (!m) return null
-        return (
-          <>
-            <StatRow label="Current price" value={fmtPrice(m.current_price)} />
-            <StatRow label="14d forecast" value={fmtPrice(m.forecast_14d)} />
-            <StatRow label="Forecast change" value={fmtPct(m.change_pct)}
-              className={m.change_pct >= 0 ? "text-emerald-400" : "text-rose-400"} />
-            <StatRow label="Order" value="ARIMA(2,1,2)" />
-            <StatRow label="CI" value="80%" />
-            <StatRow label="Horizon" value={`${m.steps} days`} />
-          </>
-        )
-      }
-      case "neural_network": {
-        const m = data.neural_network
-        if (!m) return null
-        const pctUp = m.current_probability_up != null ? (m.current_probability_up * 100).toFixed(1) : null
-        const cls = m.signal_label === "bullish" ? "text-emerald-400" : m.signal_label === "bearish" ? "text-rose-400" : "text-amber-400"
-        return (
-          <>
-            <StatRow label="P(up tomorrow)" value={pctUp != null ? pctUp + "%" : "—"} className={cls} />
-            <StatRow label="Signal" value={m.signal_label} className={cls} />
-            <StatRow label="Test accuracy" value={(m.test_accuracy * 100).toFixed(1) + "%"} />
-            <StatRow label="Training samples" value={fmtNum(m.n_train)} />
-            <StatRow label="Test samples" value={fmtNum(m.n_test)} />
-            <StatRow label="Architecture" value={m.architecture} />
-          </>
-        )
-      }
-      case "timesfm": {
-        const m = data.timesfm
-        if (!m) return null
-        const dir = m.change_pct != null && m.change_pct >= 0 ? "text-emerald-400" : "text-rose-400"
-        return (
-          <>
-            <StatRow label="Current price" value={fmtPrice(m.current_price)} />
-            <StatRow label="90d forecast" value={fmtPrice(m.forecast_90d)} />
-            <StatRow label="Expected change" value={fmtPct(m.change_pct)} className={dir} />
-            <StatRow label="Horizon" value={`${m.horizon_days} days`} />
-            <StatRow label="Context window" value={`${m.context_points} days`} />
-            <StatRow label="Model" value="chronos-t5-large" />
-            <StatRow label="Source" value="Amazon Research" />
-            <div className="pt-2 text-xs text-muted-foreground/40">
-              Zero-shot · no fine-tuning
-            </div>
-          </>
-        )
-      }
-      default:
-        return null
-    }
-  }
-
-  const selModel = MODELS.find((m) => m.id === selected)!
-  const chartSeries = buildSeries(selected)
+  const selSpec = getSpec(selected)
+  const modelData = data ? (data[selected] as Record<string, unknown> | undefined) : undefined
+  const hasError = modelData && "error" in modelData
+  const chartSeries: ChartSeries[] = data && modelData && !hasError
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? selSpec.series(modelData as any)
+    : []
+  const statRows: StatRowSpec[] = data && modelData && !hasError
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? selSpec.stats(modelData as any)
+    : []
 
   return (
     <div className="flex flex-col h-full gap-0 -m-4 lg:-m-6">
@@ -491,7 +135,7 @@ export default function QuantPage() {
       {loading ? (
         <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground/40">
           <Loader2 className="h-8 w-8 animate-spin" />
-          <p className="text-sm">Running 7 quant models…</p>
+          <p className="text-sm">Running {MODEL_SPECS.length} quant models…</p>
           <p className="text-xs">First run takes ~15 seconds</p>
         </div>
       ) : error ? (
@@ -525,10 +169,10 @@ export default function QuantPage() {
 
             {/* Model buttons */}
             <div className="py-1">
-              {MODELS.map((m) => {
+              {MODEL_SPECS.map((m) => {
                 const Icon = m.icon
-                const modelData = data[m.id as ModelId] as Record<string, unknown> | undefined
-                const hasError = modelData && "error" in modelData
+                const md = data[m.id as ModelId] as Record<string, unknown> | undefined
+                const err = md && "error" in md
                 return (
                   <button
                     key={m.id}
@@ -543,8 +187,8 @@ export default function QuantPage() {
                     <Icon className="h-3.5 w-3.5 shrink-0 mt-0.5 opacity-60" />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium truncate">{m.label}</div>
-                      <div className={cn("text-[10px] opacity-50", hasError && "text-rose-400")}>
-                        {hasError ? "error" : m.category}
+                      <div className={cn("text-[10px] opacity-50", err && "text-rose-400")}>
+                        {err ? "error" : m.category}
                       </div>
                     </div>
                   </button>
@@ -558,13 +202,13 @@ export default function QuantPage() {
             {/* Model header */}
             <div className="border-b border-border/20 px-6 py-4 bg-card/20">
               <div className="flex items-start gap-3">
-                <selModel.icon className="h-5 w-5 shrink-0 mt-0.5 text-muted-foreground/50" />
+                <selSpec.icon className="h-5 w-5 shrink-0 mt-0.5 text-muted-foreground/50" />
                 <div>
-                  <h2 className="text-base font-semibold">{selModel.label}</h2>
-                  <p className="text-xs text-muted-foreground/50 mt-0.5">{selModel.desc}</p>
+                  <h2 className="text-base font-semibold">{selSpec.label}</h2>
+                  <p className="text-xs text-muted-foreground/50 mt-0.5">{selSpec.desc}</p>
                 </div>
                 <span className="ml-auto text-[10px] px-2 py-0.5 rounded border border-border/30 text-muted-foreground/40">
-                  {selModel.category}
+                  {selSpec.category}
                 </span>
               </div>
             </div>
@@ -572,63 +216,26 @@ export default function QuantPage() {
             <div className="flex flex-col lg:flex-row gap-0 min-h-0">
               {/* Chart */}
               <div className="flex-1 min-w-0 p-4 border-b lg:border-b-0 lg:border-r border-border/20">
-                {(() => {
-                  const modelData = data[selected] as Record<string, unknown> | undefined
-                  if (modelData && "error" in modelData) {
-                    return (
-                      <div className="flex items-center gap-2 text-rose-400/70 text-sm p-4">
-                        <AlertCircle className="h-4 w-4 shrink-0" />
-                        {String(modelData.error)}
-                      </div>
-                    )
-                  }
-                  if (!chartSeries.length) return null
-                  return (
-                    <div className="rounded-lg border border-border/20 bg-card/30 overflow-hidden">
-                      <MiniChart series={chartSeries} height={280} />
-                    </div>
-                  )
-                })()}
+                {hasError ? (
+                  <div className="flex items-center gap-2 text-rose-400/70 text-sm p-4">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    {String(modelData!.error)}
+                  </div>
+                ) : chartSeries.length ? (
+                  <div className="rounded-lg border border-border/20 bg-card/30 overflow-hidden">
+                    <MiniChart series={chartSeries} height={280} />
+                  </div>
+                ) : null}
 
-                {/* Legend */}
-                {selected === "linear_regression" && (
-                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40">
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-orange-400" />Price</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400" />Trend</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400/50" />30d forecast</span>
-                  </div>
-                )}
-                {selected === "kalman" && (
-                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40">
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-orange-400" />Price</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400" />Kalman trend</span>
-                  </div>
-                )}
-                {selected === "monte_carlo" && (
+                {/* Legend (from spec) */}
+                {!hasError && selSpec.legend.length > 0 && (
                   <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40 flex-wrap">
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-rose-400/60" />P5/P95</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-rose-400" />P25/P75</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-orange-400" />Median (P50)</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-emerald-400" />P25/P75 down</span>
-                  </div>
-                )}
-                {selected === "arima" && (
-                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40">
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-orange-400" />Price</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400" />Forecast</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400/50" />80% CI</span>
-                  </div>
-                )}
-                {selected === "neural_network" && (
-                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40">
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-emerald-400" />P(up) signal — 0.5 = neutral</span>
-                  </div>
-                )}
-                {selected === "timesfm" && (
-                  <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground/40">
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-orange-400" />Price</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400" />Forecast (90d)</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-cyan-400/40" />Quantile band</span>
+                    {selSpec.legend.map((item) => (
+                      <span key={item.label} className="flex items-center gap-1.5">
+                        <span className="inline-block w-3 h-0.5" style={{ backgroundColor: item.color }} />
+                        {item.label}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
@@ -636,7 +243,10 @@ export default function QuantPage() {
               {/* Stats */}
               <div className="w-full lg:w-56 shrink-0 p-4 space-y-2">
                 <div className="text-[10px] text-muted-foreground/40 uppercase tracking-wider mb-3">Statistics</div>
-                {renderStats(selected)}
+                {!hasError && statRows.map((row, i) => <StatRow key={i} row={row} />)}
+                {!hasError && selSpec.footer && (
+                  <div className="pt-2 text-xs text-muted-foreground/40">{selSpec.footer}</div>
+                )}
                 <div className="pt-3 border-t border-border/20 text-[10px] text-muted-foreground/30 space-y-1">
                   <div>Data: {data.data_points} daily closes</div>
                   <div>Source: BTC-USD (yfinance)</div>
