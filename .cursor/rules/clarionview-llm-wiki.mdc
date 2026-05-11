@@ -1,0 +1,25 @@
+---
+description: Karpathy LLM Wiki pattern for this repo (raw gist + compiled markdown). Use when maintaining agent-facing knowledge or ingesting sources.
+globs: "**/*"
+alwaysApply: true
+---
+
+# Clarionview (dc_workbench) — LLM Wiki (Karpathy pattern)
+
+This repo follows Andrej Karpathy’s **LLM Wiki** idea ([gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)): **raw sources → compiled markdown → agent guidance** (skills/rules) so work stays consistent and attributable.
+
+## Where things live (this repo)
+
+| Piece | Path |
+|-------|------|
+| **Raw source** (immutable gist copy) | `docs/llm-wiki-raw/karpathy-llm-wiki-gist.md` |
+| **Compiled / narrative docs** | `CLAUDE.md`, `DEPLOY.md`, `ROADMAP.md`, and code-adjacent READMEs as they exist |
+| **Cursor rules** | `.cursor/rules/` (e.g. `workbench-scope.mdc`, this file) |
+
+There is **no** separate Obsidian vault in this tree; if you add one later, wire it the way the gist describes and update this table.
+
+## Conventions
+
+1. **Don’t edit** `docs/llm-wiki-raw/karpathy-llm-wiki-gist.md` except to refresh from upstream gist intentionally.
+2. **Do** update compiled docs when behavior or deployment changes; keep them the source of truth for *this* app.
+3. Respect **`.cursor/rules/workbench-scope.mdc`**: changes stay inside this workspace unless the user names another path.

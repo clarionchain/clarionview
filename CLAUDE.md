@@ -60,6 +60,10 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. LLM Wiki (Karpathy pattern)
+
+This repo keeps an immutable copy of [Karpathy’s LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) at `docs/llm-wiki-raw/karpathy-llm-wiki-gist.md` and documents the layout in `.cursor/rules/clarionview-llm-wiki.mdc`.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
